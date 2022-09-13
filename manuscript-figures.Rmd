@@ -1315,4 +1315,35 @@ plot_grid(plot_grid(tn_facil_hm + theme(legend.position = 'left'), tn_facil_tran
 ```
 
 
+## Supplemental file with isolate IDs and information
 
+```{r}
+sample_metadat <- read_csv('data/eip-metadat-short.csv') %>% 
+  rename(Pat_ID = Patient_ID) %>% 
+  mutate(Species = gsub('cloacae', 'hormaechei', Species),
+         ST = gsub('cloacae', 'hormaechei', ST)) %>% 
+  left_join(facil_st) %>% 
+  select(-c(latitude, longitude))
+
+all_sample_info_not_tn <- sample_metadat %>% 
+  select(Fac_ID, Facility_ID) %>% 
+  filter(!is.na(Facility_ID)) %>% 
+  unique() %>% 
+  right_join(sample_metadat %>% select(-Facility_ID)) %>% 
+  select(-Patient_ID) %>% 
+  left_join(sample_metadat %>% 
+              select(Pat_ID, Patient_ID) %>% 
+              filter(!is.na(Patient_ID)) %>% 
+              unique()) %>% 
+  mutate(Cult_Year = gsub('-.*', '', Cult_Date)) %>% 
+  filter(State != 'TN') %>% 
+  arrange(Patient_ID) %>% 
+  mutate(Pat_ID = factor(Pat_ID, levels = unique(Pat_ID)),
+         Patient_ID = ifelse(is.na(Patient_ID), paste0('P', as.numeric(factor(Pat_ID))), Patient_ID),
+         Patient_ID = ifelse(Patient_ID == 'PNA', NA, Patient_ID)) %>% 
+  select(Sample_ID, Patient_ID, Facility_ID, Cult_Year, State, Species, ST) %>% 
+  arrange(Sample_ID) 
+
+all_sample_info_not_tn %>% 
+  write_csv('data/supp_file_1.csv')
+```
