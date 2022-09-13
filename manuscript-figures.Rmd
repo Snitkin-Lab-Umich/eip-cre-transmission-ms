@@ -1238,7 +1238,9 @@ tn_facil_hm <- prior_hosps_tn_counts %>%
   mutate(Facility = factor(Facility, levels = rev(tn_hm$tree_col$labels[tn_hm$tree_col$order]) %>% gsub('TDH.', 'TDH-', .) %>% gsub('LONG.', 'LONG-', .) %>% gsub('VA.', 'VA-', .) %>% gsub('\\.', ' ', .)),
          ST = factor(ST, levels = tn_hm$tree_row$labels),
          ST = gsub('E. hormaechei', '*E. hormaechei*', ST),
-         ST = gsub('K. pneumoniae', '*K. pneumoniae*', ST)) %>% 
+         ST = gsub('K. pneumoniae', '*K. pneumoniae*', ST), 
+         ST = factor(ST, levels = rev(c('*K. pneumoniae* ST258', '*E. hormaechei* ST171', 'Other', '*E. hormaechei* ST114', '*K. pneumoniae* ST307'))),
+
   ggplot(aes(x = Facility, y = ST, fill = count)) +
   geom_tile() +
   geom_rect(aes(xmin = 0+0.5, xmax = 7+0.5, ymin = 0+0.5, ymax = 3+0.5), fill = NA, col = 'black', size = 1, linetype = 'dotted') +
