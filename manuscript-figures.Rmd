@@ -25,6 +25,8 @@ library(phytools)
 library(ggtree)
 library(ggtext)
 library(lubridate)
+library(scales)
+library(ggrepel)
 
 # set plotting theme
 theme_set(
@@ -43,11 +45,13 @@ set.seed(0)
 ```{r}
 # load in data
 # facility and ST
-facil_st <- read_csv('data/isolate_data.csv')
-facil_st_mn <- facil_st %>% filter(State == 'MN')
-write_csv(facil_st_mn, 'data/mn_isolate_data.csv')
+facil_st_orig <- read_csv('data/isolate_data.csv') %>% 
+  mutate(cult_year = gsub('-.*|.*/', '', Cult_Date))
+# to make analyses more consistent across states
+facil_st <- facil_st_orig %>% 
+  filter(cult_year >= 2016)
 # public isolate data
-metadat_complete <- read_csv('data/public_isolate_metadata.csv')
+metadat_complete <- read_csv('data/public_isolate_metadata.csv') 
 # public isolate trees
 tree_list <- read_rds('data/tree_list.rds')
 # pairwise snv distances
@@ -62,7 +66,8 @@ pt_feats_mn <- read_csv('data/pt_feats_mn.csv')
 pt_feats_tn <- read_csv('data/pt_feats_tn.csv')
 # shared facility exposures
 pr_hosp_pairs_ct <- read_csv('data/pr_hosp_pairs_ct.csv')
-pr_hosp_pairs_mn <- read_csv('data/pr_hosp_pairs_mn.csv')
+pr_hosp_pairs_mn_orig <- read_csv('data/pr_hosp_pairs_mn.csv')
+pr_hosp_pairs_mn <- pr_hosp_pairs_mn_orig
 pr_hosp_pairs_tn <- read_csv('data/pr_hosp_pairs_tn.csv')
 # patient transfer networks
 ct_trans_net_sub <- read_csv('data/trans_net_ct.csv')
@@ -72,8 +77,6 @@ tn_trans_net_sub <- read_csv('data/trans_net_tn.csv')
 facil_types <- read_csv('data/facil_types.csv')
 # facility counts
 facil_type_counts <- read_csv('data/facil_type_counts.csv')
-# facility w prior hospitals
-facil_w <- read_csv('data/facil_w_st171_prior_hosps.csv')
 # prior tn hospitals
 prior_hosps_tn <- read_csv('data/pr_hosps_tn.csv')
 # tn facil clutser
@@ -112,14 +115,14 @@ facil_type_counts
 ```
 
 ```{r}
-# facility types with at least one WGS
+# facility types with at least one WGS 
 facil_types %>% 
   group_by(state, type) %>% 
   summarize(count = n()) %>% 
   pivot_wider(names_from = state, values_from = count, values_fill = 0) 
 ```
 
-### Species counts by state (Table 1)
+### Isolate counts by state 
 
 ```{r}
 state_dates <- facil_st %>% mutate(Cult_Date = gsub('-.*|.*/','', Cult_Date)) %>% 
@@ -130,37 +133,70 @@ state_dates <- facil_st %>% mutate(Cult_Date = gsub('-.*|.*/','', Cult_Date)) %>
 
 facil_st %>% 
   mutate(State = factor(State, levels = c('MN','TN','CT'))) %>% 
-  group_by(State, Species) %>% 
+  group_by(State) %>% 
   count() %>% full_join(state_dates, .) %>% 
   suppressMessages()
 ```
 
-### Species counts by facility (Figure S1)
+### Isolate overview (Figure S1A)
 
 ```{r}
-fs1 <- facil_st %>% filter(Species != 'Other') %>% 
+fs1a <- facil_st %>% 
+  mutate(ST = ifelse(ST %in% c('E. hormaechei ST114','E. hormaechei ST171', 
+                                 'K. pneumoniae ST258', 'K. pneumoniae ST307'), ST, 
+                       'Other'),
+           ST = factor(ST, levels = rev(c('E. hormaechei ST171', 'E. hormaechei ST114', 
+                                      'K. pneumoniae ST258', 'K. pneumoniae ST307', 
+                                      'Other')))) %>% 
+  group_by(State, ST, cult_year) %>% 
+  filter(!is.na(cult_year)) %>% 
+  summarize(count = n()) %>% 
+  ggplot(aes(x = cult_year, y = count, fill = ST)) +
+  facet_grid(~State, scales = 'free', space = 'free') +
+  geom_col() +
+  scale_fill_manual(values = st_cols, 
+                    breaks = c('E. hormaechei ST171', 'E. hormaechei ST114',
+                               'K. pneumoniae ST258', 'K. pneumoniae ST307',
+                               'Other'), 
+                    labels = c('KPC-Eh ST171', 'KPC-Eh ST114',
+                               'KPC-Kp ST258', 'KPC-Kp ST307',
+                               'Other')) +
+  theme(legend.text = element_markdown()) +
+  labs(x = 'Culture year', y = 'Number of isolates')
+```
+
+### Species counts by facility (Figure S1B)
+
+```{r}
+fs1b <- facil_st %>% filter(Species != 'Other') %>% 
     mutate(ST = factor(ST, levels = rev(names(st_cols))),
-           Species = factor(Species, levels = c('K. pneumoniae','E. hormaechei','Other'))) %>% 
-  ggplot(aes(x = Facility_ID, fill = ST)) + geom_bar(color = 'white') + facet_grid(Species~State, scales = 'free', space = 'free') +
+           Species = factor(Species, levels = c('K. pneumoniae','E. hormaechei','Other'),
+                            labels = c('KPC-Kp', 'KPC-Eh', 'Other'))) %>% 
+  ggplot(aes(x = Facility_ID, fill = ST)) + geom_bar(color = 'white') + 
+  facet_grid(Species~State, scales = 'free', space = 'free') +
   scale_fill_manual(values = st_cols, 
                     breaks = c('E. hormaechei ST171', 'E. hormaechei ST114',
                                'K. pneumoniae ST258', 'K. pneumoniae ST307', 
                                'Other'), 
-                    labels = c('*E. hormaechei* ST171', '*E. hormaechei* ST114',
-                               '*K. pneumoniae* ST258', '*K. pneumoniae* ST307', 
+                    labels = c('KPC-Eh ST171', 'KPC-Eh ST114',
+                               'KPC-Kp ST258', 'KPC-Kp ST307', 
                                'Other'),
                     drop = FALSE) +
   labs(y = 'Number of isolates', fill = '', x = 'Facility') +
   theme(axis.text.x = element_blank(), axis.ticks.x = element_blank(),
         panel.grid.major = element_blank(), panel.grid.minor = element_blank(),
-        strip.text.y = element_text(face = 'italic'), legend.text = element_markdown())
+        legend.text = element_markdown())
+```
 
-ggsave(plot = fs1, filename = 'figures/FigS1.png', width = 7, height = 3)
+```{r, fig.width=5, fig.height=5}
+fs1 <- plot_grid(fs1a, fs1b + theme(legend.position = 'none'), ncol = 1, labels = 'AUTO')
+
+ggsave(plot = fs1, filename = 'figures/FigS1.png', width = 5, height = 5)
 
 fs1
 ```
 
-## Public data (Figure S2)
+## Public data & trees (Figure S2)
 
 ```{r}
 public_loc_plot <- metadat_complete %>% 
@@ -183,12 +219,64 @@ public_dates_plot <- metadat_complete %>%
   geom_bar() +
   labs(x = 'Year', y = 'Number of public isolates')
 
-plot_grid(public_dates_plot, public_loc_plot, ncol = 1, rel_heights = c(0.5, 1), align = 'vh', labels = 'AUTO') %>% 
-  ggsave(filename = 'figures/FigS2.png', width = 7, height = 10)
+fs2ab <- plot_grid(public_dates_plot, public_loc_plot, ncol = 1, rel_heights = c(0.5, 1), align = 'vh', axis = 'trbl', labels = 'AUTO') 
+```
+
+```{r}
+states <- metadat_complete %>% select(isolate_no, state) %>% deframe()
+states <- unique(states[c(tree_list[[1]]$tip.label, tree_list[[4]]$tip.label, tree_list[[7]]$tip.label, tree_list[[12]]$tip.label)])
+states <- states[!is.na(states)]
+state_cols <- c('#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe', '#008080', '#e6beff', '#9a6324', '#fffac8', '#800000', '#aaffc3', '#808000', '#ffd8b1', '#000075', '#808080', '#ffffff', '#000000', '#ffe119')
+names(state_cols) <- states
+
+plot_tr_locs <- function(tr, og, title = NULL){
+  tr <- root(tr, og)
+  tr <- drop.tip(tr, og)
+  states <- metadat_complete %>% select(isolate_no, state) %>% deframe()
+  states <- states[tr$tip.label]
+  kpc <- metadat_complete %>% select(isolate_no, kpc) %>% deframe()
+  kpc <- kpc[tr$tip.label]
+  no_info <- is.na(states) & is.na(kpc)
+  states <- states[!no_info]
+  kpc <- kpc[!no_info]
+  kpc <- ifelse(kpc == 1, 'Present', 'Absent')
+  tr <- keep.tip(tr, union(names(states), names(kpc)))
+  states <- c(states, rep(NA, Nnode(tr)))
+  states <- factor(states, levels = sort(names(state_cols[!is.na(names(state_cols))])))
+  kpc <- c(kpc, rep(NA, Nnode(tr)))
+  ggtree(tr) + 
+    geom_tippoint(aes(col = states, shape = kpc)) + 
+    scale_color_manual(values = state_cols, drop=FALSE) + 
+    scale_shape_manual(values = c('Present' = 16, 'Absent' = 1)) +
+    guides(color = guide_legend(ncol = 3)) +
+    labs(title = title, shape = 'KPC', col = 'State')
+}
+
+
+
+tr_st114 <- plot_tr_locs(tree_list[[7]], 'MN_CRE226', '*E. hormaechei* ST114') + 
+  theme(legend.position = 'none', plot.title = ggtext::element_markdown())
+tr_st171 <- plot_tr_locs(tree_list[[4]], 'MN_CRE226', '*E. hormaechei* ST171') + 
+  theme(legend.position = 'none', plot.title = ggtext::element_markdown())
+tr_st258 <- plot_tr_locs(tree_list[[1]], '573.1451', '*K. pneumoniae* ST258') + 
+  theme(legend.position = 'none', plot.title = ggtext::element_markdown())
+tr_st307 <- plot_tr_locs(tree_list[[12]], '573.13662', '*K. pneumoniae* ST307') + 
+  theme(legend.position = 'none', plot.title = ggtext::element_markdown())
+leg <- get_legend(plot_tr_locs(tree_list[[1]], '573.1451', '*K. pneumoniae* ST258'))
+
+fs2c <- plot_grid(plot_grid(tr_st171, tr_st114, tr_st258, tr_st307), 
+                  leg, ncol = 1, rel_heights = c(1, 0.6))
 ```
 
 
-## Importation vs. HGT
+```{r, fig.width=10, fig.height=8}
+fs2 <- plot_grid(fs2ab, fs2c, labels = c('', 'C'), label_x = -0.1)
+ggsave('figures/FigS2.png', width = 10, height = 8)
+fs2
+```
+
+
+## Evidence of importation
 
 ```{r}
 kpc_bin <- metadat_complete %>% select(isolate_no, kpc) %>% drop_na() 
@@ -197,6 +285,10 @@ tn_bin <- metadat_complete %>% select(isolate_no, tn_bin) %>% drop_na()
 ct_bin <- metadat_complete %>% select(isolate_no, ct_bin) %>% drop_na()
 
 genomes <- unique(c(kpc_bin$isolate_no, mn_bin$isolate_no, tn_bin$isolate_no, ct_bin$isolate_no))
+
+keepers <- facil_st %>% 
+  filter(!(duplicated(Patient_ID) & duplicated(ST))) %>% 
+  pull(Sample_ID)
 
 transitions <- lapply(1:length(tree_list), function(x){
   
@@ -283,97 +375,44 @@ transitions <- lapply(1:length(tree_list), function(x){
   if(nrow(grps) == 0) return(NULL)
   grps
 }) %>% 
-  bind_rows() %>% suppressWarnings()
-
-transitions <- transitions %>% 
+  bind_rows() %>% suppressWarnings() %>% 
   mutate(class = gsub('NA| ', '', class), 
          class = ifelse(is.na(class), '', class),
-         hgt_type = ifelse(grepl('gain_kpc', class), 'Unknown', ''),
-         hgt_type = ifelse(class == 'gain_kpc', 'In-state', hgt_type),
-         class2 = ifelse(toupper(gsub('to_','',class)) != state & !grepl('gain_kpc', class), '', class),
-         class2 = ifelse(grepl('gain_kpc', class2), 'Putative\nHGT', class2),
-         class2 = ifelse(class2 == '', 'Unknown', class2),
-         class2 = ifelse(grepl('to_', class2), 'Putative\nimportation', class2),
-         class2 = factor(class2, levels = c('Putative\nimportation','Putative\nHGT','Unknown')),
+         class2 = ifelse(grepl('gain_kpc', class), 'No', class),
+         class2 = ifelse(class2 == '', 'No', class2),
+         class2 = ifelse(grepl('to_', class2), 'Yes', class2),
+         class2 = factor(class2, levels = c('Yes','No')),
          ST = ifelse(ST %in% c('ST258','ST307'), paste0('K. pneumoniae ', ST), ST),
          ST = ifelse(ST %in% c('ST171','ST114'), paste0('E. hormaechei ', ST), ST),
          ST = gsub('cloacae', 'hormaechei', ST),
-         ST_orig = gsub('cloacae', 'hormaechei', ST_orig)
-         )
-
-keepers <- facil_st %>% 
-  filter(!(duplicated(Patient_ID) & duplicated(ST))) %>% 
-  pull(Sample_ID)
-```
-
-### Trees used (Figure S3)
-
-```{r}
-states <- metadat_complete %>% select(isolate_no, state) %>% deframe()
-states <- unique(states[c(tree_list[[1]]$tip.label, tree_list[[4]]$tip.label, tree_list[[7]]$tip.label, tree_list[[12]]$tip.label)])
-states <- states[!is.na(states)]
-state_cols <- c('#e6194b', '#3cb44b', '#4363d8', '#f58231', '#911eb4', '#46f0f0', '#f032e6', '#bcf60c', '#fabebe', '#008080', '#e6beff', '#9a6324', '#fffac8', '#800000', '#aaffc3', '#808000', '#ffd8b1', '#000075', '#808080', '#ffffff', '#000000', '#ffe119')
-names(state_cols) <- states
-
-plot_tr_locs <- function(tr, og, title = NULL){
-  tr <- root(tr, og)
-  tr <- drop.tip(tr, og)
-  states <- metadat_complete %>% select(isolate_no, state) %>% deframe()
-  states <- states[tr$tip.label]
-  kpc <- metadat_complete %>% select(isolate_no, kpc) %>% deframe()
-  kpc <- kpc[tr$tip.label]
-  no_info <- is.na(states) & is.na(kpc)
-  states <- states[!no_info]
-  kpc <- kpc[!no_info]
-  kpc <- ifelse(kpc == 1, 'Present', 'Absent')
-  tr <- keep.tip(tr, union(names(states), names(kpc)))
-  states <- c(states, rep(NA, Nnode(tr)))
-  kpc <- c(kpc, rep(NA, Nnode(tr)))
-  ggtree(tr) + 
-    geom_tippoint(aes(col = states, shape = kpc)) + 
-    scale_color_manual(values = state_cols) + 
-    scale_shape_manual(values = c('Present' = 16, 'Absent' = 1)) +
-    guides(color = guide_legend(ncol = 2)) +
-    labs(title = title, shape = 'KPC', col = 'State')
-}
-
-tr_st114 <- plot_tr_locs(tree_list[[7]], 'MN_CRE226', '*E. hormaechei* ST114') + 
-  theme(legend.position = 'none', plot.title = ggtext::element_markdown())
-tr_st171 <- plot_tr_locs(tree_list[[4]], 'MN_CRE226', '*E. hormaechei* ST171') + 
-  theme(legend.position = 'none', plot.title = ggtext::element_markdown())
-tr_st258 <- plot_tr_locs(tree_list[[1]], '573.1451', '*K. pneumoniae* ST258') + 
-  theme(legend.position = 'none', plot.title = ggtext::element_markdown())
-tr_st307 <- plot_tr_locs(tree_list[[12]], '573.13662', '*K. pneumoniae* ST307') + 
-  theme(legend.position = 'none', plot.title = ggtext::element_markdown())
-leg <- get_legend(plot_tr_locs(tree_list[[7]], 'MN_CRE226', 'E. hormaechei ST114'))
-
-fs3 <- plot_grid(plot_grid(tr_st171, tr_st114, tr_st258, tr_st307), leg)
-
-ggsave(plot = fs3, filename = 'figures/FigS3.png', width = 8, height = 8)
-
-fs3
-```
-
-### Importation vs. HGT (Figure 1)
-
-```{r}
-clust_cols <- st_cols[transitions$ST]
-names(clust_cols) <- paste0(transitions$state, transitions$ST, transitions$cluster)
-
-clust_cols <- (c(clust_cols[clust_cols == "grey"],
-                clust_cols[clust_cols == "coral3"],
-                clust_cols[clust_cols == "coral4"],
-                clust_cols[clust_cols == "aquamarine3"],
-                clust_cols[clust_cols == "aquamarine4"]
-                ))
-
-transitions <- transitions %>% filter(id %in% keepers) %>% 
-  mutate(ST = factor(ST, levels = (c("E. hormaechei ST171", "E. hormaechei ST114", 
+         ST_orig = gsub('cloacae', 'hormaechei', ST_orig),
+         ST = factor(ST, levels = (c("E. hormaechei ST171", "E. hormaechei ST114", 
                                      "K. pneumoniae ST258", "K. pneumoniae ST307", 
                                      'Other'))),
-         state = factor(state, levels = c('CT', 'MN', 'TN'))) %>%
+         state = factor(state, levels = c('CT', 'MN', 'TN'))) %>% 
+  filter(id %in% keepers) %>% 
   arrange(ST)
+```
 
+
+
+### Evidence of importation (Figure 1)
+
+```{r}
+transitions <- transitions %>% 
+  mutate(ST = ifelse(grepl('ST258', ST_orig), 'K. pneumoniae ST258', as.character(ST))) 
+clust_cols <- st_cols[as.character(transitions$ST)]
+names(clust_cols) <- paste0(transitions$state, transitions$ST, transitions$cluster)
+
+clust_cols <- (c(clust_cols[clust_cols == "grey"][sort(names(clust_cols[clust_cols == "grey"]), decreasing = TRUE)],
+                clust_cols[clust_cols == "coral3"][sort(names(clust_cols[clust_cols == "coral3"]), decreasing = TRUE)],
+                clust_cols[clust_cols == "coral4"][sort(names(clust_cols[clust_cols == "coral4"]), decreasing = TRUE)],
+                clust_cols[clust_cols == "aquamarine3"][sort(names(clust_cols[clust_cols == "aquamarine3"]), decreasing = TRUE)],
+                clust_cols[clust_cols == "aquamarine4"][sort(names(clust_cols[clust_cols == "aquamarine4"]), decreasing = TRUE)]
+                ))
+```
+
+```{r, fig.width=7, fig.height=4}
 f1 <- transitions %>% 
   ggplot(aes(x = class2, 
              fill = factor(paste0(state, ST, cluster), 
@@ -381,12 +420,12 @@ f1 <- transitions %>%
   geom_bar(color = 'white', position = position_stack(reverse = TRUE)) + 
   scale_fill_manual(values = clust_cols,
                     breaks = rev(names(clust_cols)[!duplicated(clust_cols)]),
-                    labels = c('*E. hormaechei* ST171', '*E. hormaechei* ST114',
-                               '*K. pneumoniae* ST258', '*K. pneumoniae* ST307',
+                    labels = c('KPC-Eh ST171', 'KPC-Eh ST114',
+                               'KPC-Kp ST258', 'KPC-Kp ST307',
                                'Other'),
                     drop = FALSE) +
   facet_grid(~state, scales = 'free', space = 'free') +
-  labs(fill = 'ST cluster', x = 'Cluster type', y = 'Number of isolates') +
+  labs(fill = 'ST cluster', x = 'Evidence that KPC-harboring strain was imported', y = 'Number of isolates') +
   theme(legend.text = ggtext::element_markdown()) 
 
 ggsave(plot = f1, filename = 'figures/Fig1.png', width = 7, height = 4)
@@ -403,30 +442,6 @@ transitions %>%
          prop = count/tot)
 ```
 
-
-### HGT locations (Figure S4)
-
-```{r}
-fs4 <- transitions %>% 
-  filter(id %in% keepers & hgt_type != '') %>%
-  ggplot(aes(x = hgt_type, 
-             fill = factor(paste0(state, ST, cluster), 
-                           levels = unique(paste0(state, ST, cluster))))) + 
-  geom_bar(color = 'white', position = position_stack(reverse = TRUE)) + 
-  scale_fill_manual(values = clust_cols,
-                    breaks = rev(names(clust_cols)[!duplicated(clust_cols)]),
-                    labels = c('*E. hormaechei* ST171', '*E. hormaechei* ST114',
-                               '*K. pneumoniae* ST258', '*K. pneumoniae* ST307',
-                               'Other'),
-                    drop = FALSE) +
-  facet_grid(~state, scales = 'free', space = 'free') +
-  labs(fill = 'ST cluster', x = 'HGT location', y = 'Number of isolates') +
-  theme(legend.text = ggtext::element_markdown()) 
-
-ggsave(plot = fs4, filename = 'figures/FigS4.png', width = 6, height = 3)
-
-fs4
-```
 ```{r}
 # earliest date for ST114 and ST307 
 facil_st %>% 
@@ -470,7 +485,11 @@ snv_dat <- bind_rows(kp_snv_dists, ec_snv_dists) %>% filter(state1 == state2) %>
          ST_orig = st1,
          ST = ifelse(st1 %in% dominant_sts, st1, 'Other'),
          Species = gsub(' ST.*','',st1),
-         ST = gsub('.* ','',ST))
+         ST = gsub('.* ','',ST)) %>% 
+  left_join(facil_st %>% select(Sample_ID, cult_year) %>% 
+              rename(isolate1 = Sample_ID, year1 = cult_year)) %>% 
+  left_join(facil_st %>% select(Sample_ID, cult_year) %>% 
+              rename(isolate2 = Sample_ID, year2 = cult_year))
 ```
 
 ```{r}
@@ -507,7 +526,7 @@ pat_dat <- bind_rows(kp_pat_dists, ec_pat_dists) %>% filter(state1 == state2) %>
 
 ## Intra- and inter-facility pairwise SNV distances
 
-### Fraction of intra-facility isolates over time (Figure S5)
+### Fraction of intra-facility isolates over time (Figure S3A)
 
 ```{r}
 snvdat_orig <- snv_dat[,1:6] %>% mutate(pairwise_dist = as.numeric(pairwise_dist))
@@ -523,190 +542,130 @@ frac_intras <- lapply(unique(c(snv_dat$st1, snv_dat$st2)), function(st){
   }) %>% bind_rows()
 }) %>% bind_rows()
 
-fs5 <- frac_intras %>% 
+
+fs3a <- frac_intras %>% 
     mutate(ST = ifelse(ST %in% c('E. hormaechei ST114','E. hormaechei ST171', 
                                  'K. pneumoniae ST258', 'K. pneumoniae ST307'), ST, 
                        'Other'),
            ST = factor(ST, levels = c('E. hormaechei ST171', 'E. hormaechei ST114', 
                                       'K. pneumoniae ST258', 'K. pneumoniae ST307', 
                                       'Other'),
-                       labels = c('*E. hormaechei* ST171', '*E. hormaechei* ST114', 
-                                      '*K. pneumoniae* ST258', '*K. pneumoniae* ST307', 
+                       labels = c('KPC-Eh<br>ST171', 'KPC-Eh<br>ST114', 
+                                      'KPC-Kp<br>ST258', 'KPC-Kp<br>ST307', 
                                       'Other'))) %>% 
   filter(frac_intra != 0 & ST != 'Other') %>% 
-  ggplot(aes(x = pairwise_dist, y = frac_intra)) + 
-  geom_bar(stat = "identity", fill = "blue", alpha = 0.5) + 
-  labs(x = "Pairwise SNV distance", y = "Fraction of intra-facility pairs") + xlim(0, 50) + 
-  facet_wrap(state~ST, scales = 'free') +
-  theme(strip.text = element_markdown())
-
-ggsave(plot = fs5, filename = 'figures/FigS5.png', width = 6, height = 5)
-
-fs5
+  filter(pairwise_dist <= 50) %>%
+  ggplot(aes(x = pairwise_dist, y = frac_intra, fill = state)) + 
+  geom_bar(stat = "identity") + # fill = "blue", 
+  geom_vline(xintercept = c(5, 10, 15), alpha = 0.2) +
+  labs(x = "Pairwise SNV distance", y = "Fraction of intra-facility pairs", fill = 'State') + 
+  facet_grid(ST~., scales = 'free') +
+  scale_fill_brewer(palette = 'Set1') +
+  scale_x_continuous(breaks = seq(0, 50, by = 5)) +
+  theme(strip.text.y = element_markdown(angle = 0), panel.grid = element_blank())
 ```
 
-### Pairwise SNV distances by pair type, state, and dominant STs (Figure 2)
+### Pairwise SNV distances by pair type, state, and other STs (Figure S3B)
 
 ```{r}
-f2 <- snv_dat %>% 
-  mutate(pairwise_dist = ifelse(pairwise_dist == 0, 1, pairwise_dist),
+fs3b <- snv_dat %>% 
+  filter(state1 == state2 & pair_type != 'Unknown' & !is.na(pair_type)) %>%
+  mutate(pairwise_dist = ifelse(pairwise_dist == 0, 0.1, pairwise_dist),
          pair_type = factor(gsub(' pair', '', pair_type), levels = c('Intra-facility','Inter-facility')),
-         Species = gsub('^', '\\*', Species),
-         Species = gsub('$', '\\*', Species),
-         state1 = factor(state1, levels = c('CT', 'MN', 'TN'))) %>% 
-  filter(pair_type != 'Unknown' & ST != 'Other') %>% 
-  ggplot(aes(x = pair_type, y = pairwise_dist)) + 
-  geom_jitter(aes(fill = under_thresh, color = under_thresh),alpha = 0.5) +
+         state1 = factor(state1, levels = c('CT','MN','TN')),
+         # pair_type = ifelse(is.na(pair_type), 'Unknown', pair_type),
+         # pair_type = gsub(' pair', '', pair_type),
+         st1 = gsub('K. pneumoniae', 'KPC-Kp', st1),
+         st1 = gsub('E. hormaechei', 'KPC-Eh', st1)) %>% 
+  ggplot(aes(x = pairwise_dist, y = st1, color = under_thresh)) + 
+  # geom_vline(xintercept = c(5, 10, 15), color = 'darkgrey', linetype = 'dashed') +
+  geom_jitter(alpha=0.5) + 
+  facet_grid(pair_type~state1, scales = 'free', space = 'free') +
   scale_color_manual(values = c('[0,5]' = "#9EBCDA",'(5,10]' = "#BFD3E6", '(10,15]' = "#E0ECF4",'(15,∞)' = "#FBB4AE")) +
-  geom_violin(position = 'identity',alpha=0, color = 'azure4') +
-  facet_grid(Species+ST~state1, scales = 'free') + scale_y_log10() +
-  labs(x = 'Pair type',y = 'Pairwise SNV distance', color = 'SNV bin', fill = 'SNV bin') +
-  theme(strip.text.y = element_markdown())
-
-ggsave(plot = f2, filename = 'figures/Fig2.png', width = 6.5, height = 5)
-
-f2
+  scale_x_continuous(breaks = seq(0, 600, by = 50)) +
+  # scale_color_manual(values = c('lightslateblue','black')) +
+  labs(y = '', x = 'Pairwise SNV distance', color = 'SNV bin') 
 ```
 
-### Pairwise SNV distances by pair type, state, and all STs (Figure S6)
+### Patristic distance sensitivity analysis (Figure S3C)
 
 ```{r}
-fs6 <- snv_dat %>% filter(state1 == state2 & pair_type != 'Unknown') %>% 
-  mutate(state1 = factor(state1, levels = c('CT','MN','TN')),
-         pair_type = ifelse(is.na(pair_type), 'Unknown', pair_type),
-         st1 = gsub('^', '\\*', st1),
-         st1 = gsub('e ', 'e\\* ', st1),
-         st1 = gsub('i ', 'i\\* ', st1)) %>% 
-  ggplot(aes(x = pairwise_dist, y = st1, color = pair_type)) + 
-  geom_vline(xintercept = 10, color = 'darkgrey') +
-  geom_jitter(alpha=0.25) + facet_grid(~state1, scales = 'free') +
-  scale_color_manual(values = c('lightslateblue','black')) +
-  labs(y = '', x = 'Pairwise SNV distance', color = '') +
-  theme(axis.text.y = element_markdown())
-
-ggsave(plot = fs6, filename = 'figures/FigS6.png', width = 7, height = 5)
-
-fs6
-```
-
-### Patristic distance sensitivity analysis (Figure S7)
-
-```{r}
-fs7 <- left_join(snv_dat %>% rename(pd_snv = pairwise_dist), pat_dat %>% rename(pd_pat = pairwise_dist)) %>% 
-  mutate(state1 = factor(state1, levels = c('CT', 'MN', 'TN')),
-         pair_type = factor(gsub(' pair', '', pair_type), levels = c('Intra-facility','Inter-facility')),
-         Species = gsub('^', '\\*', Species),
-         Species = gsub('$', '\\*', Species)) %>% 
-  filter(pair_type != 'Unknown' & ST != 'Other') %>% 
-  ggplot(aes(x = pair_type, y = pd_pat)) + geom_jitter(aes(fill = under_thresh, color = under_thresh),alpha = 0.5) +
+fs3c <- left_join(snv_dat %>% rename(pd_snv = pairwise_dist), pat_dat %>% rename(pd_pat = pairwise_dist)) %>% 
+  filter(state1 == state2 & pair_type != 'Unknown' & !is.na(pair_type)) %>%
+  mutate(pair_type = factor(gsub(' pair', '', pair_type), levels = c('Intra-facility','Inter-facility')),
+         state1 = factor(state1, levels = c('CT','MN','TN')),
+         st1 = gsub('K. pneumoniae', 'KPC-Kp', st1),
+         st1 = gsub('E. hormaechei', 'KPC-Eh', st1)) %>% 
+  ggplot(aes(x = pd_pat, y = st1, color = under_thresh)) + 
+  geom_jitter(alpha=0.5) + 
+  facet_grid(pair_type~state1, scales = 'free', space = 'free') +
   scale_color_manual(values = c('[0,5]' = "#9EBCDA",'(5,10]' = "#BFD3E6", '(10,15]' = "#E0ECF4",'(15,∞)' = "#FBB4AE")) +
-  geom_violin(position = 'identity',alpha=0, color = 'azure4') +
-  facet_grid(Species+ST~state1, scales = 'free') + scale_y_log10() +
-  labs(x = 'Pair type',y = 'Pairwise patristic distance', color = 'SNV bin', fill = 'SNV bin') +
-  theme(strip.text.y = element_markdown())
-
-ggsave(plot = fs7, filename = 'figures/FigS7.png', width = 6.5, height = 5)
-
-fs7
+  scale_x_continuous(breaks = seq(0, 0.01, by = 0.00003)) +
+  labs(y = '', x = 'Pairwise patristic distance', color = 'SNV bin') 
 ```
 
-## Closely related facility type pairs (Table S2)
 
-```{r}
-pr_hosp_pairs_ct <- left_join(pr_hosp_pairs_ct, snv_dat)
-pr_hosp_pairs_mn <- left_join(pr_hosp_pairs_mn, snv_dat)
-pr_hosp_pairs_tn <- left_join(pr_hosp_pairs_tn, snv_dat)
+```{r, fig.width=7.5, fig.height=10.5}
+fs3 <- plot_grid(plotlist = list(fs3a, fs3b, fs3c), ncol = 1, labels = 'AUTO',
+                 rel_heights = c(0.75, 1.1, 1.1),
+                 align = 'hv', axis = 'trbl')
 
-nodes <- bind_rows(pr_hosp_pairs_mn %>% select(loc1, state1, st1) %>% 
-                     rename(Facility_ID = loc1, state = state1, st = st1),
-                   pr_hosp_pairs_mn %>% select(loc2, state2, st2) %>% 
-                     rename(Facility_ID = loc2, state = state2, st = st2),
-                   pr_hosp_pairs_tn %>% select(loc1, state1, st1) %>% 
-                     rename(Facility_ID = loc1, state = state1, st = st1),
-                   pr_hosp_pairs_tn %>% select(loc2, state2, st2) %>% 
-                     rename(Facility_ID = loc2, state = state2, st = st2),
-                   pr_hosp_pairs_ct %>% select(loc1, state1, st1) %>% 
-                     rename(Facility_ID = loc1, state = state1, st = st1),
-                   pr_hosp_pairs_ct %>% select(loc2, state2, st2) %>% 
-                     rename(Facility_ID = loc2, state = state2, st = st2)) %>% 
-  filter(!duplicated(.)) %>% filter(!is.na(Facility_ID)) %>%
-  select(-st) 
-  # mutate(st = gsub('cloacae', 'hormaechei', st),
-  #        st = ifelse(st %in% c('E. hormaechei ST114','E. hormaechei ST171', 'K. pneumoniae ST258', 'K. pneumoniae ST307'), st, 'Other'))
+ggsave(plot = fs3, filename = 'figures/FigS3.png', width = 7.5, height = 10.5)
 
-edges <- bind_rows(pr_hosp_pairs_mn %>% rename(from = loc1, to = loc2), 
-          pr_hosp_pairs_tn %>% rename(from = loc1, to = loc2), 
-          pr_hosp_pairs_ct %>% rename(from = loc1, to = loc2)) %>% 
-  filter(pairwise_dist < 10) %>% 
-  select(from, to, same_pr_hosp, st1) %>%
-  filter(!is.na(to) & !is.na(from)) %>% 
-  mutate(st1 = gsub('cloacae', 'hormaechei', st1),
-         st1 = ifelse(st1 %in% c('E. hormaechei ST114','E. hormaechei ST171', 'K. pneumoniae ST258', 'K. pneumoniae ST307'), st1, 'Other'),
-         st1 = factor(st1, levels = c('E. hormaechei ST114','E. hormaechei ST171', 
-                                      'K. pneumoniae ST258', 'K. pneumoniae ST307', 'Other'),
-                      labels = c('*E. hormaechei* ST114','*E. hormaechei* ST171', 
-                                      '*K. pneumoniae* ST258', '*K. pneumoniae* ST307', 'Other')),
-         same_pr_hosp = ifelse(same_pr_hosp, 'Yes','No'))
-
-graph <- tbl_graph(nodes = nodes, edges = edges, directed = FALSE) %>% 
-  induced.subgraph(igraph::degree(.) > 0)
+fs3
 ```
 
-```{r}
-left_join(edges, facil_types %>% rename(from = Facility_ID, type_from = type)) %>% 
-  left_join(facil_types %>% rename(to = Facility_ID, type_to = type)) %>% 
-  mutate(type_pair = sapply(1:nrow(.), function(x) paste0(sort(c(type_from[x], type_to[x])), collapse = '-')),
-         type_pair = ifelse(type_pair %in% c('ACH-ACH', 'ACH-LTACH', 'ACH-SNF'), type_pair, 'Other')) %>% 
-  group_by(state, st1, type_pair) %>% 
-  summarize(count = n()) %>% 
-  arrange(state, st1, type_pair) %>% 
-  pivot_wider(names_from = type_pair, values_from = count, values_fill = 0) %>% 
-  select(state, st1, `ACH-ACH`, `ACH-LTACH`, `ACH-SNF`, Other)
-```
-
-## Intra-facility analysis (Figure S8)
+## Intra-facility analysis (Figure 2A)
 
 ```{r}
 min_dat <- lapply(unique(c(as.character(snv_dat$isolate1), as.character(snv_dat$isolate2))), function(i){
-  snv_dat %>% filter(pair_type == 'Intra-facility pair' & (isolate1 == i | isolate2 == i)) %>% 
-  group_by(loc1, ST_orig, state1) %>% 
-  summarize(dist_min = min(pairwise_dist))
+  snv_dat %>% filter((isolate1 == i | isolate2 == i) & pair_type != 'Unknown') %>%
+    group_by(pair_type, ST_orig, state1) %>% 
+    summarize(dist_min = min(pairwise_dist)) %>% 
+    pivot_wider(names_from = pair_type, values_from = dist_min)
 }) %>% bind_rows() %>% suppressMessages() %>% suppressWarnings()
 ```
 
-```{r}
-fs8 <- min_dat %>% 
-    mutate(under_thresh = ifelse(dist_min <= 15, '(10,15]','(15,∞)'),
-         under_thresh = ifelse(dist_min <= 10, '(5,10]',under_thresh),
-         under_thresh = ifelse(dist_min <= 5, '[0,5]',under_thresh),
-         under_thresh = factor(under_thresh, levels = rev(c('[0,5]','(5,10]','(10,15]','(15,∞)'))),
-         ST = ifelse(ST_orig %in% c('K. pneumoniae ST258','E. hormaechei ST171', 'K. pneumoniae ST307','E. hormaechei ST114'), ST_orig, 'Other'),
-         ST = factor(ST, levels = c('E. hormaechei ST171', 'E. hormaechei ST114', 'K. pneumoniae ST258', 'K. pneumoniae ST307', 'Other'),
-                     labels = c('*E. hormaechei*<br>ST171', '*E. hormaechei*<br>ST114', 
-                                '*K. pneumoniae*<br>ST258', '*K. pneumoniae*<br>ST307', 'Other')),
-         state1 = factor(state1, levels = c('CT', 'MN', 'TN'))) %>% 
-  ggplot(aes(x = reorder(loc1, loc1, function(x)-length(x)), fill = under_thresh)) + 
-  geom_bar() +
-       scale_fill_manual(values = c('[0,5]' = "#9EBCDA",'(5,10]' = "#BFD3E6", '(10,15]' = "#E0ECF4",'(15,∞)' = "#FBB4AE")) +
-         labs(y = "Number of isolates", x = "Facility", fill = 'SNV bin of closest\nintra-facility isolate') +
-  facet_grid(ST~state1, space = 'free', scales = 'free_x') +
-  theme(axis.text.x = element_blank(), strip.text.y = element_markdown()) + 
-  scale_y_continuous(breaks = scales::pretty_breaks())
-
-ggsave(plot = fs8, filename = 'figures/FigS8.png', width = 7, height = 5)
-
-fs8
-```
-
-## Clinical factor analysis (Table S3)
 
 ```{r}
-fisher <- function(a,b,c,d){
-  data <- matrix(c(a,b,c,d),ncol=2)
-  c(p = fisher.test(data)$p.value,
-    OR = fisher.test(data)$estimate)
-}
+min_dat %>% 
+  filter(!is.na(`Inter-facility pair`) & !is.na(`Intra-facility pair`)) %>% 
+  group_by(ST_orig, state1) %>% 
+  summarize(n = n(), 
+            median_intra = median(`Intra-facility pair`),
+            median_inter = median(`Inter-facility pair`),
+            wilcox_p = wilcox.test(`Intra-facility pair`, `Inter-facility pair`, 
+                                   paired = TRUE)$p.value) %>% 
+  arrange(-n)
 ```
+
+```{r}
+f2a <- min_dat %>% 
+  filter(!is.na(`Inter-facility pair`) & !is.na(`Intra-facility pair`)) %>% 
+  group_by(ST_orig, state1) %>% 
+  filter(!`Intra-facility pair` > 400) %>% 
+  mutate(ST = ifelse(ST_orig %in% c('E. hormaechei ST171', 'E. hormaechei ST114', 
+                                        'K. pneumoniae ST258', 'K. pneumoniae ST307'),
+                     ST_orig, 'Other')) %>% 
+  ggplot(aes(x = `Intra-facility pair`, y = `Inter-facility pair`)) +
+  facet_grid(~state1, scales = 'free') +
+  geom_abline(intercept = 0, linetype = 'dotted') +
+  geom_point(aes( color = ST), alpha = 0.5) +
+  geom_text(aes(label = 'y=x', x = 65, y = 80), check_overlap = TRUE) +
+  scale_color_manual(values = st_cols, 
+                    breaks = c('E. hormaechei ST171', 'E. hormaechei ST114',
+                               'K. pneumoniae ST258', 'K. pneumoniae ST307',
+                               'Other'), 
+                    labels = c('KPC-Eh ST171', 'KPC-Eh ST114',
+                               'KPC-Kp ST258', 'KPC-Kp ST307',
+                               'Other')) +
+  scale_x_continuous(breaks = seq(0, 160, by = 20)) +
+  theme(panel.grid = element_blank()) +
+  labs(x = 'Minimum pairwise SNV distance of\nan isolate from the same facility', y = 'Minimum pairwise SNV distance of\nan isolate from a different facility')
+```
+
+
+## Clinical factor analysis
 
 ```{r}
 intra_pairs_ct <- snv_dat %>% filter(loc1 == loc2 & st1 == st2 & state1 == 'CT')
@@ -743,432 +702,310 @@ pt_info_tn <- suppressMessages(lapply(1:nrow(intra_pairs_tn), function(x){
   }
   info
 })) %>% bind_rows() 
-
-pt_info_comb <- bind_rows(pt_info_mn, pt_info_tn, pt_info_ct) %>%
-  mutate(`pairwise_dist <= 10` = pairwise_dist <= 10) %>% 
-  select(state1, st1, shared_clin, `pairwise_dist <= 10`)
-
-pt_comorb_compare <- pt_info_comb %>% 
-  group_by(state1, st1, shared_clin, `pairwise_dist <= 10`) %>% summarize(count = n()) %>% 
-  mutate(sharedclin_pdlt10 = factor(paste0(ifelse(shared_clin, 'shared', 'not shared'), ', ', 
-                                           ifelse(`pairwise_dist <= 10`, '≤10', '>10')),
-                                    levels = c('shared, ≤10', 'shared, >10', 'not shared, ≤10', 'not shared, >10'))) %>% 
-  ungroup() %>% 
-  arrange(sharedclin_pdlt10) %>% 
-  select(-c(shared_clin, `pairwise_dist <= 10`)) %>% 
-  pivot_wider(names_from = sharedclin_pdlt10, values_from = count, values_fill = 0) %>% 
-  group_by(state1, st1) %>% 
-  rowwise() %>% 
-  mutate(fe_p = fisher(`shared, ≤10`, `shared, >10`, `not shared, ≤10`, `not shared, >10`)[[1]]) %>% 
-  arrange(state1, st1) %>% 
-  mutate(frac_shared_lt10 = `shared, ≤10`/(`shared, ≤10` + `not shared, ≤10`),
-         frac_shared_gt10 = `shared, >10`/(`shared, >10` + `not shared, >10`)) 
-
-pt_comorb_compare
 ```
+
+
+```{r}
+shared_clin_pvals <- bind_rows(pt_info_mn, pt_info_tn, pt_info_ct) %>%
+  left_join(snv_dat %>% filter(loc1 != loc2)) %>% 
+  group_by(state1, st1) %>% 
+  filter(sum(shared_clin) != 0 & sum(!shared_clin) != 0) %>%
+  summarize(wilcox_p = paste0('p = ', signif(wilcox.test(pairwise_dist[shared_clin], pairwise_dist[!shared_clin], alternative = 'less')$p.value, 5)))
+shared_clin_pvals
+```
+
 
 ## Inter-facility analysis
 
-### Aggregate patient transfer (Figure S9)
-
-```{r}
-mn_pt_trans <- get_patient_flow(mn_trans_net_sub, 
-                                unique(facil_st$Facility_ID)[unique(facil_st$Facility_ID) %in% 
-                                                        c(mn_trans_net_sub$source_facil,
-                                                          mn_trans_net_sub$dest_facil)]) %>% 
-  filter(!duplicated(.))
-tn_pt_trans <- get_patient_flow(tn_trans_net_sub, unique(facil_st$Facility_ID)[unique(facil_st$Facility_ID) %in% 
-                                                        c(tn_trans_net_sub$source_facil,
-                                                          tn_trans_net_sub$dest_facil)]) %>% 
-  filter(!duplicated(.))
-ct_pt_trans <- get_patient_flow(ct_trans_net_sub, unique(facil_st$Facility_ID)[unique(facil_st$Facility_ID) %in% 
-                                                        c(ct_trans_net_sub$source_facil,
-                                                          ct_trans_net_sub$dest_facil)]) %>% 
-  filter(!duplicated(.))
-
-sts <- c('ST171','ST258','ST114','ST307')
-
-snv_by_st <- suppressWarnings(lapply(sts, function(x){
-  snvdat_sub <- snv_dat %>% filter(ST == x) %>% mutate(pairwise_dist = as.numeric(pairwise_dist))
-  snvdat_sub <- snvdat_sub[,1:6] 
-    mn_snv_by_st_sub <- summarize_pairs(snvdat_sub) %>% mutate(ST = x)
-})) %>% bind_rows()
-
-pt_snv <- bind_rows(bind_cols(state = 'MN', mn_pt_trans), 
-                    bind_cols(state = 'TN', tn_pt_trans),
-                    bind_cols(state = 'CT', ct_pt_trans)) %>% inner_join(snv_by_st) %>%
-  mutate(under_thresh = ifelse(dist_min <= 15, '(10,15]','(15,∞)'),
-         under_thresh = ifelse(dist_min <= 10, '(5,10]',under_thresh),
-         under_thresh = ifelse(dist_min <= 5, '[0,5]',under_thresh),
-         under_thresh = factor(under_thresh, levels = c('[0,5]','(5,10]','(10,15]','(15,∞)')),
-         species = ifelse(ST %in% c('ST258','ST307'), 'K. pneumoniae','E. hormaechei'))
-```
-
-```{r}
-pvals <- pt_snv %>% 
-  mutate(leq_10_bool = ifelse(dist_min <= 10, 'close','not_close')) %>% 
-  select(state, ST, leq_10_bool, sum_pt_trans_metric) %>% group_by(state, ST, leq_10_bool) %>% 
-  summarize(sum_pt_trans_metric = list(sum_pt_trans_metric)) %>% 
-  spread(leq_10_bool, sum_pt_trans_metric) %>% 
-  group_by(state, ST) %>% 
-  filter(!(is.null(unlist(close)) | is.null(unlist(not_close)))) %>% 
-  mutate(close_median=median(unlist(close)),
-         not_close_median=median(unlist(not_close)),
-         p=wilcox.test(unlist(close),unlist(not_close))$p.value) %>% 
-  mutate(species = ifelse(ST %in% c('ST258','ST307'), '*K. pneumoniae*','*E. hormaechei*'))
-
-fs9 <- pt_snv %>% 
-  mutate(species = gsub('^', '\\*',species),
-         species = gsub('$', '\\*',species),
-         sum_pt_trans_metric = sum_pt_trans_metric + min(sum_pt_trans_metric[sum_pt_trans_metric != 0]/2), # no infinite values in transformation
-         dist_min = dist_min + min(dist_min[dist_min != 0]/2)) %>%  # no infinite values in transformation
-  ggplot(aes(x = sum_pt_trans_metric, y = dist_min)) + 
-  geom_point(aes(color = under_thresh)) + scale_y_log10() + scale_x_log10() +
-  scale_color_manual(
-    values = c('[0,5]' = "#9EBCDA",'(5,10]' = "#BFD3E6", '(10,15]' = "#E0ECF4",'(15,∞)' = "#FBB4AE")
-    ) +
-  geom_text(data = pvals, aes(x = 5e-5, y = 1, label = paste0('p=',signif(p, 1))), hjust = 0) +
-  facet_grid(species+ST~state) + 
-  labs(x = 'Sum(patient flow between facility pair)', y = 'Minimum pairwise SNV distance', color = 'SNV bin') +
-  theme(strip.text.y = element_markdown())
-
-ggsave(plot = fs9, filename = 'figures/FigS9.png', width = 7, height = 4)
-
-fs9
-```
-
 ### Prior hospital 
 
-#### Individual healthcare exposures (Table 2)
+#### Individual healthcare exposures 
 
 ```{r}
-pr_summary <- bind_rows(pr_hosp_pairs_ct, pr_hosp_pairs_mn, pr_hosp_pairs_tn) %>%
+pr_hosp_pairs_ct <- inner_join(pr_hosp_pairs_ct, snv_dat)
+pr_hosp_pairs_mn <- inner_join(pr_hosp_pairs_mn_orig, snv_dat) 
+pr_hosp_pairs_tn <- inner_join(pr_hosp_pairs_tn, snv_dat)
+# pr_hosp_pairs_mn_all <- inner_join(pr_hosp_pairs_mn_orig, mn_snv_dat_orig)
+
+pr_hops_pvals <- bind_rows(pr_hosp_pairs_ct, pr_hosp_pairs_mn, pr_hosp_pairs_tn,
+                           # pr_hosp_pairs_mn_all %>% mutate(state1 = 'MN_all')
+                           ) %>%
   left_join(snv_dat %>% filter(loc1 != loc2)) %>% 
-  mutate(st1 = ifelse(st1 %in% c("E. hormaechei ST114", "E. hormaechei ST171", "K. pneumoniae ST258", 
-"K. pneumoniae ST307"), st1, 'Other')) %>% 
-  group_by(state1, st1, same_pr_hosp, pairwise_dist <= 10) %>% 
-  summarize(total_l10 = n()) %>% 
-  mutate(same_pr_hosp = ifelse(same_pr_hosp, 'pr_hosp','no_pr_hosp'),
-         `pairwise_dist <= 10` = ifelse(`pairwise_dist <= 10`, 'lt10','gt10')) %>% 
-  pivot_wider(names_from = c(same_pr_hosp, `pairwise_dist <= 10`), values_from = c(total_l10)) %>% 
-  rename(state = state1, st = st1) %>% 
-  select(state, st, pr_hosp_lt10, no_pr_hosp_lt10, pr_hosp_gt10, no_pr_hosp_gt10) %>% 
-  replace(is.na(.), 0)
-
-pr_summary$fisher_p <- sapply(1:nrow(pr_summary), function(x){
-  exact2x2(matrix(unlist(c(pr_summary[x,3:6])), nrow = 2))$p.value %>% signif(digits = 1)
-})
-
-pr_summary <- pr_summary %>% 
-  mutate(pr_hosp_lt10_pct = round(pr_hosp_lt10/(no_pr_hosp_lt10 + pr_hosp_lt10), 1)*100, .after = no_pr_hosp_lt10) %>% 
-  mutate(pr_hosp_gt10_pct = round(pr_hosp_gt10/(no_pr_hosp_gt10 + pr_hosp_gt10), 1)*100, .after = no_pr_hosp_gt10) %>% 
-  mutate('Pairwise SNV distance ≤ 10\nwith shared facility exposure (%)' =
-           paste0(pr_hosp_lt10, '/', (pr_hosp_lt10+no_pr_hosp_lt10), ' (',round(pr_hosp_lt10/(pr_hosp_lt10+no_pr_hosp_lt10),2)*100,')'),
-         'Pairwise SNV distance > 10\nwith shared facility exposure (%)' =
-           paste0(pr_hosp_gt10, '/', (pr_hosp_gt10+no_pr_hosp_gt10), ' (',round(pr_hosp_gt10/(pr_hosp_gt10+no_pr_hosp_gt10),2)*100,')')) %>% 
-  select(c("state", "st", 
-           "Pairwise SNV distance ≤ 10\nwith shared facility exposure (%)", 
-           "Pairwise SNV distance > 10\nwith shared facility exposure (%)",
-           "fisher_p"
-)) %>% 
-  rename(State = state, ST = st, "Fisher's exact p" = fisher_p)
-
-pr_summary
-```
-
-### Individual graph (Figure S10)
-
-```{r}
-fs10 <- graph %>% ggraph(layout = 'kk') + 
-  geom_edge_parallel(aes(color = st1, linetype = same_pr_hosp, alpha = same_pr_hosp),sep = unit(0.4, "mm")) + 
-  geom_node_point(size = 0.5) + 
-  scale_edge_linetype_manual(values = c('dotted','solid')) +
-  facet_nodes(~state, nrow = 3) +
-  scale_edge_alpha_manual(values = c(0.5, 1)) + 
-  scale_edge_color_manual(values = c('*E. hormaechei* ST171'="aquamarine4", '*E. hormaechei* ST114'="aquamarine3",
-                                     '*K. pneumoniae* ST258'="coral4", '*K. pneumoniae* ST307'="coral3",
-                                     'Other'='grey'), 
-                          breaks = c('*E. hormaechei* ST171', '*E. hormaechei* ST114',
-                                      '*K. pneumoniae* ST258', '*K. pneumoniae* ST307', 'Other'), drop = FALSE) +
-  labs(edge_color = 'Isolate pair ≤ 10 SNVs', edge_linetype = 'Patients have\nshared facility exposure',
-       edge_alpha = 'Patients have\nshared facility exposure') +
-  theme_graph() + theme(legend.text = element_markdown())
-
-ggsave(plot = fs10, filename = 'figures/FigS10.png', width = 5, height = 6)
-
-fs10
-```
-
-### Comparison of individual to aggregate (Figure S11)
-
-```{r}
-fs11 <- full_join(pr_summary %>% mutate(ST_orig = ST, ST = gsub('.* ','',ST)) %>% rename('ind_p' = "Fisher's exact p"), 
-          pvals %>% rename(State = state, 'agg_p' = 'p')) %>% 
-  mutate(ST_orig = gsub('^', '\\*', ST_orig),
-         ST_orig = gsub('e ', 'e\\* ', ST_orig),
-         ST_orig = gsub('i ', 'i\\* ', ST_orig)) %>% 
-  filter(ST != 'Other') %>% 
-  ggplot(aes(x = ind_p, y = agg_p, col = State, shape = ST_orig)) +
-  geom_point(size = 3) +
-  scale_color_manual(values = c(CT = "#46f0f0", MN = "#3cb44b", TN = "#4363d8")) +
-  geom_hline(yintercept = 0.05) +
-  geom_vline(xintercept = 0.05) +
-  labs(x = 'Patient transfer p-value from\nindividual-level analysis', 
-       y = 'Patient transfer p-value from\naggregate-level analysis',
-       shape = 'ST') +
-    theme(legend.text = element_markdown())
-
-ggsave(plot = fs11, filename = 'figures/FigS11.png', width = 5, height = 3)
-
-fs11
-```
-
-## MN maps (Figure 3)
-
-```{r}
-# connecting each patient to their closest isolate with a subsequent collection date
-edge_dat <- lapply(unique(c(as.character(snv_dat$isolate1), as.character(snv_dat$isolate2))), function(i){
-  cultdate <- facil_st$Cult_Date[facil_st$Sample_ID == i]
-  subset_dat <- snv_dat %>% filter(pair_type == 'Inter-facility pair' & (isolate1 == i | isolate2 == i) & state1 == 'MN')
-  dates <- sapply(unique(c(as.character(subset_dat$isolate1), as.character(subset_dat$isolate2))), function(j){
-    as.character(facil_st$Cult_Date[facil_st$Sample_ID == j])
-  }) 
-  dat <- NULL
-  if(length(dates) > 0){
-    keepers <- names(dates)[as.Date(dates) > cultdate]
-    dat <- subset_dat %>% 
-      filter(isolate1 %in% keepers | isolate2 %in% keepers) %>% 
-      filter(pairwise_dist == min(pairwise_dist)) %>% 
-      mutate(earlier = as.character(ifelse(isolate2 == i, 'loc2','loc1')),
-             date1 = dates[as.character(isolate1)],
-             date2 = dates[as.character(isolate2)],
-             datediff = abs(as.numeric(as.Date(dates[as.character(isolate1)]) - as.Date(dates[as.character(isolate2)]))))
-  }
-}) %>% bind_rows() 
-
-edges_for_plot <- edge_dat %>% 
-  filter(pairwise_dist <= 15) %>% 
-  left_join(facil_st %>% select(Sample_ID, Facility_ID, longitude, latitude), 
-            by = c('isolate1' = 'Sample_ID', 'loc1' = 'Facility_ID')) %>%
-  rename(x = longitude, y = latitude) %>%
-  left_join(facil_st %>% select(Sample_ID, Facility_ID, longitude, latitude), 
-            by = c('isolate2' = 'Sample_ID', 'loc2' = 'Facility_ID')) %>%
-  rename(xend = longitude, yend = latitude) %>% 
-  filter(!(is.na(x) | is.na(xend)) & ST %in% c('ST171','ST258')) %>% 
-  mutate(dist = abs(x - xend)^2 + abs(y - yend)^2)
-
-facilities <- facil_st %>% filter(State == 'MN' & ST %in% c('E. hormaechei ST171', 'K. pneumoniae ST258')) %>% 
-  select(Facility_ID, latitude, longitude) %>% 
-  filter(!duplicated(.) & !is.na(latitude)) 
+  group_by(state1, st1) %>% 
+  filter(sum(same_pr_hosp) != 0 & sum(!same_pr_hosp) != 0) %>% 
+  summarize(n_shared = sum(same_pr_hosp),
+            n_not_shared = sum(!same_pr_hosp),
+            median_shared = median(pairwise_dist[same_pr_hosp]),
+            median_not_shared = median(pairwise_dist[!same_pr_hosp]),
+            wilcox_p = paste0('p = ', signif(wilcox.test(pairwise_dist[same_pr_hosp],
+                                                         pairwise_dist[!same_pr_hosp], 
+                                                         alternative = 'less')$p.value, 1)))
 ```
 
 
 ```{r}
-edges_for_plot_ec <- edges_for_plot %>% filter(ST == 'ST171') %>% 
-  mutate(under_thresh = factor(under_thresh, levels = c("[0,5]", "(5,10]", "(10,15]")))
-
-whole_state_ec <- facil_st %>% 
-  mutate(ST = gsub('cloacae', 'hormaechei', ST)) %>% 
-  filter(ST %in% c('E. hormaechei ST171')) %>%
-  mutate(ST = gsub('.* ST', 'ST', ST)) %>% 
-  group_by(Facility_ID, latitude, longitude, ST)  %>% tally() %>%
-  ggplot(aes(x=longitude, y=latitude), color = "grey99") +
-    geom_curve(aes(x = xend, y = yend, xend = x, yend = y, color = under_thresh),     # draw edges as arcs
-                 alpha = 1,
-             data = edges_for_plot_ec, curvature = 0.33) + 
-  scale_color_manual(values = c('[0,5]' = "#9EBCDA",'(5,10]' = "#BFD3E6", '(10,15]' = "#E0ECF4")) +
-  geom_point(data = facilities, aes(x = longitude, y = latitude), alpha = 0.25, size = 1) +
-  geom_point(aes(size=n), alpha = 1, color = 'white') +
-  geom_point(aes(size=n), fill = adjustcolor(st_cols[c('E. hormaechei ST171')], alpha.f = 0.5), pch = 21) + 
-  scale_size_continuous(breaks = seq(0, 20, 5), limits = c(0,25),
-                        labels = c(0,5,10,15,20),
-                        name = 'Number of\nisolates') +
-  coord_quickmap() +
-  # geom_rect(aes(xmin = -986875.33, xmax = -986875.165, ymin = 896963.81, ymax = 896964.1),
-  geom_rect(aes(xmin = -986875.33+0.58, xmax = -986875.165+0.58, ymin = 896963.81+0.145, ymax = 896964.1+0.145),
-  fill = "transparent", color = "lightgrey", size = 1) +
-  labs(color = 'SNV bin', size = 'Number of\nisolates') +
-  guides(size = guide_legend(override.aes = list(alpha = c(0.25, 1, 1, 1, 1), fill = 'black'))) +
-  theme_void() 
-whole_state_ec
-
-zoom_state_ec <- whole_state_ec + 
-  # coord_quickmap(xlim=c(-986875.33+0.007, -986875.165-0.007), ylim=c(896963.81+0.012, 896964.1-0.012)) +
-  coord_quickmap(xlim=c(-986875.33+0.58+0.007, -986875.165+0.58-0.007), ylim=c(896963.81+0.145+0.013, 896964.1+0.145-0.013)) +
-  theme(legend.position = "none") + 
-  geom_text(aes(label = ifelse(Facility_ID == 'F38', 'W', NA)),hjust=1.5, vjust=2)
-zoom_state_ec
-```
-
-```{r}
-edges_for_plot_kp <- edges_for_plot %>% filter(ST == 'ST258')
-whole_state_kp <- facil_st %>% 
-  filter(ST %in% c('K. pneumoniae ST258')) %>%
-  mutate(ST = gsub('.* ST', 'ST', ST)) %>% 
-  group_by(Facility_ID, latitude, longitude, ST)  %>% tally() %>%
-  ggplot(aes(x=longitude, y=latitude), color = "grey99") +
-    geom_curve(aes(x = xend, y = yend, xend = x, yend = y, color = under_thresh),     # draw edges as arcs
-                 alpha = 1,
-             data = edges_for_plot_kp, curvature = 0.33) + 
-  scale_color_manual(values = c('[0,5]' = "#9EBCDA",'(5,10]' = "#BFD3E6", '(10,15]' = "#E0ECF4",'(15,∞)' = "#FBB4AE")) +
-  geom_point(data = facilities, aes(x = longitude, y = latitude), size = 1, alpha = 0.25) +
-  geom_point(aes(size=n), alpha = 1, color = 'white') +
-  geom_point(aes(size=n), fill = adjustcolor(st_cols['K. pneumoniae ST258'], alpha.f = 0.5), pch = 21) + 
-  scale_size_continuous(breaks = seq(5, 20, 5), limits = c(1,25)) +
-  coord_quickmap() +
-  # geom_rect(aes(xmin = -986875.33, xmax = -986875.165, ymin = 896963.81, ymax = 896964.1),
-  geom_rect(aes(xmin = -986875.33+0.58, xmax = -986875.165+0.58, ymin = 896963.81+0.145, ymax = 896964.1+0.145),
-               fill = "transparent", color = "lightgrey", size = 1) +
-  labs(size = 'Number of\nisolates', color = 'SNV bin') +
-  theme_void() 
-whole_state_kp
-
-zoom_state_kp <- whole_state_kp + 
-  # coord_quickmap(xlim=c(-986875.33+0.007, -986875.165-0.007), ylim=c(896963.81+0.012, 896964.1-0.012)) +
-  coord_quickmap(xlim=c(-986875.33+0.58+0.007, -986875.165+0.58-0.007), ylim=c(896963.81+0.145+0.013, 896964.1+0.145-0.013)) +
-  theme(legend.position = "none") +
-   geom_text(aes(label = ifelse(Facility_ID == 'F38', 'W', NA)),hjust=1.5, vjust=2)
-zoom_state_kp
-```
-
-```{r}
-# grob plotting function to plot panel colors
-plot_panel_cols <- function(p, fills){
-  gt <- ggplot_gtable(ggplot_build(p))
-  strip_both <- which(grepl('strip-', gt$layout$name))
-  k <- 1
-  for (i in strip_both) {
-    j <- which(grepl('rect', gt$grobs[[i]]$grobs[[1]]$childrenOrder))
-    gt$grobs[[i]]$grobs[[1]]$children[[j]]$gp$fill <- fills[k]
-    k <- k+1
-  }
-  ggplotify::as.ggplot(gt)
-}
-```
-
-
-```{r}
-bp <- edge_dat %>% pivot_longer(cols = c('loc1','loc2'), names_to = 'fname', values_to = 'loc') %>% 
-  filter(ST %in% c('ST171','ST258') & under_thresh != '(15,∞)') %>%
-  mutate(under_thresh = factor(under_thresh, levels = rev(levels(under_thresh))),
-         ST = factor(ifelse(ST == 'ST171', '*E. hormaechei* ST171', '*K. pneumoniae* ST258'),
-                     levels = c('*E. hormaechei* ST171', '*K. pneumoniae* ST258'))) %>% 
-  filter(fname == earlier) %>% 
-  select(loc, ST, under_thresh) %>%
-  ggplot(aes(x = loc)) + 
-    geom_bar(aes(col = ifelse(loc == 'F38', 'yes','no'))) +
-  geom_bar(aes(fill = under_thresh)) + 
-  facet_grid(ST~.) +
-    scale_fill_manual(values = c('[0,5]' = "#9EBCDA",'(5,10]' = "#BFD3E6", '(10,15]' = "#E0ECF4",'(15,∞)' = "#FBB4AE")) +
-  scale_color_manual(values = c('yes' = 'black','no' = NA)) +
-  labs(x = 'Facility', y = 'Number of isolates closely related\nto an isolate from another facility', fill = 'SNV bin')
-
-bp_labeled <- bp + scale_x_discrete(labels = ifelse(ggplot_build(bp)$layout$panel_params[[1]]$x$breaks == 'F38', 'W','')) +
-  theme_classic() +
-  theme(legend.position = 'none', #axis.ticks.x = element_blank(), 
-        text = element_text(size = 10), 
-        axis.text.x = element_text(angle = 0),
-        strip.background = element_rect(fill="white",linetype='blank'),
-        strip.text.y = element_markdown())
-bp_col <- plot_panel_cols(bp_labeled, adjustcolor(st_cols[c('E. hormaechei ST171','K. pneumoniae ST258')], alpha.f = 0.5)) 
-```
-
-```{r}
-leg <- ggpubr::get_legend(whole_state_ec +
-                            theme(legend.box.margin = margin(0, 0, 0, 50))
-)
-f3 <- plot_grid(leg, NULL,
-          plot_grid(whole_state_ec + theme(legend.position = 'none'), zoom_state_ec,
-                    NULL, NULL,
-                    whole_state_kp + theme(legend.position = 'none'), zoom_state_kp,
-                    NULL, NULL,
-                    nrow = 4, 
-                    rel_heights = c(1,0.05,1,0.1,1,0.05,1,0.1)),
-          plot_grid(NULL, bp_col, NULL, ncol = 1, rel_heights = c(0.1,0.8,0.05)), nrow = 1,
-          rel_widths = c(0.2, 0.05, 1, 0.8) 
-)
-
-ggsave(plot = f3, filename = 'figures/Fig3.png', width = 10, height = 4)
-
-f3
-```
-
-```{r}
-# prior facilities for facility w/ st171 isolates 
-facil_w %>% 
-  mutate(n_patients_tot = n_distinct(Sample_ID)) %>% 
-  filter(!is.na(prior_hosp_alias)) %>% 
-  unique() %>% 
-  group_by(prior_hosp_alias, n_patients_tot) %>% 
-  summarize(n_patients = n()) %>% 
-  ungroup() %>% 
-  mutate(prop_patients = n_patients/n_patients_tot) %>% 
-  arrange(-n_patients) 
-```
-
-### Comparison of ST171 and ST258 inter-facility transmission patterns (Figure S12)
-
-```{r}
-## for each facility, how many times it's involved in a link
-
-frac_ec <- lapply(unique(edges_for_plot_ec$loc1, edges_for_plot_ec$loc2), function(x){
-  edges_for_plot_ec %>% filter(pairwise_dist <= 10) %>% 
-  mutate(conn = ifelse(loc1 == !!x | loc2 == !!x, 'connected', 'not')) %>% 
-  group_by(conn, ST) %>% summarize(count = n()) %>% mutate(facil = x)
-}) %>% bind_rows() %>% suppressMessages() %>% ungroup() %>% filter(!duplicated(.)) %>% 
-  group_by(facil) %>% 
-  mutate(n_facil = sum(count), frac = count/n_facil) %>% 
-  ungroup() %>% 
-  filter(conn == 'connected') 
-
-frac_kp <- lapply(unique(edges_for_plot_kp$loc1, edges_for_plot_kp$loc2), function(x){
-  edges_for_plot_kp %>% filter(pairwise_dist <= 10) %>% 
-  mutate(conn = ifelse(loc1 == !!x | loc2 == !!x, 'connected', 'not')) %>% 
-  group_by(conn, ST) %>% summarize(count = n()) %>% mutate(facil = x)
-}) %>% bind_rows() %>% suppressMessages() %>% ungroup() %>% filter(!duplicated(.)) %>% 
-  group_by(facil) %>% 
-  mutate(n_facil = sum(count), frac = count/n_facil) %>% 
-  ungroup() %>% 
-  filter(conn == 'connected') 
-
-max(frac_ec$frac)
-facils_ec <- frac_ec %>% pull(facil)
-ec_perm_cts <- lapply(1:1000, function(x){
-  sample(facils_ec, sum(frac_ec$count), replace = TRUE) %>% table() %>% data.frame() %>% rename(facil = '.') %>% 
-    mutate(tot = sum(Freq), perm = x, frac = Freq/tot) %>% slice_max(Freq) %>% slice(1)
-}) %>% bind_rows() 
-
-max(frac_kp$frac)
-facils_kp <- frac_kp %>% pull(facil)
-kp_perm_cts <- lapply(1:1000, function(x){
-  sample(facils_kp, sum(frac_kp$count), replace = TRUE) %>% table() %>% data.frame() %>% rename(facil = '.') %>% 
-    mutate(tot = sum(Freq), perm = x, frac = Freq/tot) %>% slice_max(Freq) %>% slice(1)
-}) %>% bind_rows() 
-
-fs12 <- bind_rows(ec_perm_cts %>% select(frac) %>% mutate(ST = 'ST171'),
-          kp_perm_cts %>% select(frac) %>% mutate(ST = 'ST258')) %>% 
-  mutate(ST = factor(ifelse(ST == 'ST171', '*E. hormaechei* ST171', '*K. pneumoniae* ST258'),
-                     levels = c('*E. hormaechei* ST171', '*K. pneumoniae* ST258'))) %>% 
-  ggplot(aes(x = frac)) +
-  geom_histogram(binwidth = 0.05) +
-  geom_point(data = tibble(frac = c(max(frac_ec$frac), max(frac_kp$frac)), 
-                           st = c('*E. hormaechei* ST171', '*K. pneumoniae* ST258')), 
-             aes(y = 0), col = 'red', shape = 18, size = 5) +
-  facet_grid(~st, scales = 'free') +
-  labs(x = 'Maximum proportion of edges connected to a given facility', y = 'Number of edges') +
+f2b <- bind_rows(pr_hosp_pairs_ct, pr_hosp_pairs_mn %>% filter(!is.na(state1)), pr_hosp_pairs_tn) %>%
+  left_join(snv_dat %>% filter(loc1 != loc2)) %>% 
+  mutate(st1 = ifelse(st1 %in% c("E. hormaechei ST114", "E. hormaechei ST171", "K. pneumoniae ST258", "K. pneumoniae ST307"), st1, 'Other')) %>% 
+  left_join(pr_hops_pvals) %>% 
+  filter(state1 == 'MN' & st1 == 'E. hormaechei ST171' |
+           state1 == 'TN' & st1 %in% c('K. pneumoniae ST258', 'K. pneumoniae ST307', 'E. hormaechei ST114')) %>% 
+  mutate(same_pr_hosp = factor(ifelse(same_pr_hosp, 'Yes', 'No'), levels = c('Yes', 'No')),
+         # st1 = gsub('E', '\\*E', st1),
+         # st1 = gsub('K', '\\*K', st1),
+         # st1 = gsub('i ', 'i\\* ', st1),
+         # st1 = gsub('e ', 'e\\* ', st1),
+         wilcox_p = ifelse(wilcox_p == 'p = 9e-07', 'p < 0.001', wilcox_p),
+         st1 = gsub('K. pneumoniae', 'KPC-Kp', st1),
+         st1 = gsub('E. hormaechei', 'KPC-Eh', st1),
+         st1 = paste0(st1, ': ', wilcox_p)) %>% 
+  ggplot() +
+  facet_grid(~state1+st1, scales = 'free') +
+  # geom_text(aes(x = 0, y = 50, label = wilcox_p), check_overlap = TRUE, vjust = 0, hjust = 0) +
+  # geom_histogram(aes(x = pairwise_dist), fill = 'white') +
+  # geom_histogram(aes(x = pairwise_dist, fill = same_pr_hosp), alpha = 0.5) +
+  geom_density(aes(x = pairwise_dist, fill = same_pr_hosp), alpha = 0.5) +
+  scale_fill_grey(start = 0.3, end = 0.7) +
+  labs(x = 'Pairwise SNV distance', y = 'Density of pairs', fill = 'Shared facility\nexposure') +
   theme(strip.text.x = element_markdown())
-
-sum(ec_perm_cts$frac > max(frac_ec$frac))/length(ec_perm_cts$frac)
-sum(kp_perm_cts$frac > max(frac_kp$frac))/length(kp_perm_cts$frac)
-
-fs12 <- plot_panel_cols(fs12, adjustcolor(st_cols[c('E. hormaechei ST171','K. pneumoniae ST258')], alpha.f = 0.5)) 
-
-# ggsave(plot = fs12, filename = 'figures/FigS12.png', width = 7, height = 4)
-
-fs12
 ```
 
-### Facility W (Figure S13)
+```{r}
+bind_rows(pr_hosp_pairs_ct, pr_hosp_pairs_mn %>% filter(!is.na(state1)), pr_hosp_pairs_tn) %>%
+  left_join(snv_dat %>% filter(loc1 != loc2)) %>% 
+  mutate(st1 = ifelse(st1 %in% c("E. hormaechei ST114", "E. hormaechei ST171", "K. pneumoniae ST258", "K. pneumoniae ST307"), st1, 'Other')) %>% 
+  left_join(pr_hops_pvals) %>% 
+  filter(state1 == 'MN' & st1 == 'E. hormaechei ST171' |
+           state1 == 'TN' & st1 %in% c('K. pneumoniae ST258', 'K. pneumoniae ST307', 'E. hormaechei ST114')) %>% 
+  select(state1, ST, n_shared, n_not_shared) %>% 
+  unique()
+```
+
+
+
+
+```{r, fig.width=7, fig.height=7}
+f2 <- plot_grid(f2a + theme(legend.position = 'top'), 
+                          f2b + theme(legend.position = 'bottom'), 
+                          ncol = 1, labels = 'AUTO', align = 'h', axis = 'tr')
+
+ggsave(plot = f2, filename = 'figures/Fig2.png', width = 7, height = 7)
+
+f2
+```
+
+
+### MN over time (Figure S4)
+
+
+```{r}
+fs4a <- facil_st_orig %>% 
+  filter(State == 'MN' & ST %in% c('K. pneumoniae ST258', 'E. hormaechei ST171')) %>% 
+  mutate(facil = ifelse(Facility_ID == 'F38', 'F38', 'Other'),
+         facil = ifelse(is.na(facil), 'Other', facil),
+         ST = gsub('K. pneumoniae', 'KPC-Kp', ST),
+         ST = gsub('E. hormaechei', 'KPC-Eh', ST)) %>% 
+  ggplot(aes(x = cult_year, fill = facil)) +
+  facet_wrap(~ST) +
+  geom_bar() +
+  scale_fill_manual(values = rev(c('grey80', 'mistyrose3'))) + #'mistyrose1', 'grey80')) +
+  labs(x = 'Year', y = 'Number of isolates', fill = 'Facility')
+```
+
+```{r}
+# snv distances
+mn_kp_snv_dists <- get_pair_types(kp_dists, 
+                                  facil_st_orig %>% 
+                                    filter(State == 'MN') %>% 
+                                    select(Sample_ID, Facility_ID) %>% deframe(), 
+                                  pt = NULL) %>% 
+  filter(!sapply(1:nrow(.), function(x) sort(c(as.character(isolate1[x]),as.character(isolate2[x])))) %>% t() %>% duplicated()) %>% 
+  mutate(st1 = sapply(isolate1, function(x) facil_st_orig$ST[facil_st_orig$Sample_ID == x]),
+         st2 = sapply(isolate2, function(x) facil_st_orig$ST[facil_st_orig$Sample_ID == x]),
+         state1 = sapply(isolate1, function(x) facil_st_orig$State[facil_st_orig$Sample_ID == x]),
+         state2 = sapply(isolate2, function(x) facil_st_orig$State[facil_st_orig$Sample_ID == x])) %>% 
+  filter(st1 == st2 & !grepl('novel',st1)) %>% 
+  mutate(state_pair = paste(state1, state2)) 
+
+mn_ec_snv_dists <- get_pair_types(ec_dists, facil_st_orig %>% 
+                                    filter(State == 'MN') %>% 
+                                    select(Sample_ID, Facility_ID) %>% 
+                                    deframe(), 
+                                  pt = NULL) %>% 
+  filter(!sapply(1:nrow(.), function(x) sort(c(as.character(isolate1[x]),as.character(isolate2[x])))) %>% t() %>% duplicated()) %>% 
+  mutate(st1 = sapply(isolate1, function(x) facil_st_orig$ST[facil_st_orig$Sample_ID == x]),
+         st2 = sapply(isolate2, function(x) facil_st_orig$ST[facil_st_orig$Sample_ID == x]),
+         state1 = sapply(isolate1, function(x) facil_st_orig$State[facil_st_orig$Sample_ID == x]),
+         state2 = sapply(isolate2, function(x) facil_st_orig$State[facil_st_orig$Sample_ID == x])) %>% 
+  filter(st1 == st2 & !grepl('novel',st1)) %>% 
+  mutate(state_pair = paste(state1, state2)) 
+
+mn_snv_dat_orig <- bind_rows(mn_kp_snv_dists, mn_ec_snv_dists) %>% filter(state1 == state2) %>% 
+  mutate(state1 = factor(state1, levels = c('MN','TN','CT')),
+         pair_type = ifelse(is.na(pair_type), 'Unknown', pair_type),
+         under_thresh = ifelse(pairwise_dist <= 15, '(10,15]','(15,∞)'),
+         under_thresh = ifelse(pairwise_dist <= 10, '(5,10]',under_thresh),
+         under_thresh = ifelse(pairwise_dist <= 5, '[0,5]',under_thresh),
+         under_thresh = factor(under_thresh, levels = c('[0,5]','(5,10]','(10,15]','(15,∞)')),
+         ST_orig = st1,
+         ST = ifelse(st1 %in% dominant_sts, st1, 'Other'),
+         Species = gsub(' ST.*','',st1),
+         ST = gsub('.* ','',ST)) %>% 
+  left_join(facil_st_orig %>% select(Sample_ID, Cult_Date, cult_year) %>% 
+              rename(isolate1 = Sample_ID, date1 = Cult_Date, year1 = cult_year)) %>% 
+  left_join(facil_st_orig %>% select(Sample_ID, Cult_Date, cult_year) %>% 
+              rename(isolate2 = Sample_ID, date2 = Cult_Date, year2 = cult_year)) %>% 
+  mutate(datediff = abs(ymd(date1) - ymd(date2)))
+
+mn_snv_dat <- mn_snv_dat_orig %>% 
+  filter(ST %in% c('ST258', 'ST171') & year1 == year2)
+```
+
+```{r}
+fs4b <- mn_snv_dat %>% 
+  filter(pair_type != 'Unknown') %>% 
+  mutate(pair_type = gsub(' pair', '', pair_type),
+         ST = ifelse(ST == 'ST171', 'KPC-Eh ST171', 'KPC-Kp ST258')) %>% 
+  ggplot(aes(x = year1, y = pairwise_dist, col = under_thresh, shape = pair_type)) +
+  facet_grid(~ST) +
+  geom_jitter(alpha = 0.7) +
+  scale_color_manual(values = c('[0,5]' = "#9EBCDA",'(5,10]' = "#BFD3E6", '(10,15]' = "#E0ECF4",'(15,∞)' = "#FBB4AE")) +
+  scale_shape_manual(values = c(1, 19)) +
+  labs(x = 'Year', y = 'Pairwise SNV distance', col = 'SNV bin', shape = 'Isolate\npair type')
+```
+
+```{r, fig.width=7, fig.height=7}
+fs4 <- plot_grid(fs4a, fs4b, ncol = 1, labels = 'AUTO')
+ggsave(plot = fs4, filename = 'figures/FigS4.png', width = 7, height = 7)
+fs4
+```
+
+
+
+## MN ST171 transmission (Figure 3)
+
+```{r}
+f3a <- mn_snv_dat_orig %>% 
+  filter(ST %in% c('ST258', 'ST171') & pair_type != 'Unknown') %>% 
+  mutate(datediff_bin = cut(as.numeric(datediff), breaks = c(-1, 365*1:7),
+                            labels = c('0-1', paste0(1:6, '-', 2:7))),
+         under_thresh = factor(under_thresh, 
+                               levels = rev(unique(levels(under_thresh)))),
+         st1 = gsub('E. hormaechei', 'KPC-Eh', st1),
+         st1 = gsub('K. pneumoniae', 'KPC-Kp', st1)) %>% 
+  ggplot(aes(x = datediff_bin, fill = under_thresh)) +
+  facet_grid(pair_type~st1, scales = 'free') + 
+  geom_bar() +
+  scale_fill_manual(values = c('[0,5]' = "#9EBCDA",'(5,10]' = "#BFD3E6", '(10,15]' = "#E0ECF4",'(15,∞)' = "#FBB4AE")) +
+  labs(x = 'Number of years separating isolates', y = 'Number of isolate pairs',
+       fill = 'SNV bin')
+```
+
+```{r}
+f3b <- mn_snv_dat_orig %>% 
+  filter(ST %in% c('ST171') & loc1 == loc2 & pairwise_dist <= 15) %>% 
+  mutate(datediff_bin = cut(as.numeric(datediff), breaks = c(-1, 365*1:7),
+                            labels = c('0-1', paste0(1:6, '-', 2:7))),
+         under_thresh = factor(under_thresh,
+                               levels = rev(unique(levels(under_thresh))))
+         ) %>% 
+  group_by(loc1, ST, under_thresh, datediff_bin) %>% 
+  summarize(count = n()) %>%
+  mutate(f38 = ifelse(count > 50, loc1, NA),
+         ST = paste0('KPC-Eh ', ST)) %>%
+  ggplot(aes(x = loc1, y = count, fill = under_thresh)) +
+  facet_grid(~ST) +
+  geom_col() +
+  scale_y_continuous(breaks = pretty_breaks())  +
+  scale_fill_manual(values = c('[0,5]' = "#9EBCDA",'(5,10]' = "#BFD3E6", '(10,15]' = "#E0ECF4",'(15,∞)' = "#FBB4AE")) +
+  labs(y = 'Number of pairs', x = 'Facility of intra-facility pair', fill = 'SNV bin')
+```
+
+```{r}
+f3c <- mn_snv_dat_orig %>% 
+  filter(ST %in% c('ST171') & pairwise_dist <= 15 & loc1 != loc2) %>% 
+  mutate(datediff_bin = cut(as.numeric(datediff), breaks = c(-1, 365*1:7),
+                            labels = c('0-1', paste0(1:6, '-', 2:7))),
+         under_thresh = factor(under_thresh, 
+                               levels = rev(unique(levels(under_thresh))))) %>% 
+  pivot_longer(c(loc1, loc2)) %>% 
+  group_by(value, ST, under_thresh) %>% 
+  summarize(count = n()) %>%
+  mutate(f38 = ifelse(count > 50, value, NA),
+         ST = paste0('KPC-Eh ', ST)) %>% 
+  ggplot(aes(x = value, y = count, fill = under_thresh)) +
+  facet_grid(~ST, scales = 'free') +
+  # geom_histogram(binwidth = 5) +
+  geom_col() +
+  # geom_text(aes(y = 1.5, label = f38)) +
+  scale_y_continuous(breaks = pretty_breaks())  +
+  scale_fill_manual(values = c('[0,5]' = "#9EBCDA",'(5,10]' = "#BFD3E6", '(10,15]' = "#E0ECF4",'(15,∞)' = "#FBB4AE")) +
+  labs(y = 'Number of isolates', x = 'Facility of inter-facility pair', fill = 'SNV bin')
+```
+
+```{r}
+mn_snv_dat_orig %>% 
+  filter(ST %in% c('ST171') & pairwise_dist <= 10 &
+           !is.na(loc1) & !is.na(loc2) & loc1 != loc2) %>% 
+  mutate(datediff_bin = cut(as.numeric(datediff), breaks = c(-1, 365*1:7),
+                            labels = c('0-1 year', paste0(1:6, '-', 2:7, ' years'))),
+         under_thresh = factor(under_thresh, 
+                               levels = rev(unique(levels(under_thresh)))),
+         loc1 = ifelse(loc1 %in% c('F38'), loc1, 'Other'),
+         loc2 = ifelse(loc2 %in% c('F38'), loc2, 'Other')
+         # loc1 = ifelse(loc1 %in% c('F38', 'F55', 'F34', 'F46'), loc1, 'Other'),
+         # loc2 = ifelse(loc2 %in% c('F38', 'F55', 'F34', 'F46'), loc2, 'Other')
+         ) %>% 
+  rowwise() %>% 
+  mutate(loc1_new = paste(sort(c(loc1, loc2)))[1],
+         loc2_new = paste(sort(c(loc1, loc2)))[2]) %>% 
+  ungroup() %>%
+  mutate(f38 = loc1_new == 'F38' | loc2_new == 'F38') %>% 
+  group_by(f38) %>% 
+  summarize(count = n()) %>% 
+  ungroup() %>% 
+  mutate(tot = sum(count),
+         pct = paste0(round(count/tot*100), '%')) 
+```
+
+```{r}
+mn_snv_dat_orig %>% 
+  filter(ST %in% c('ST171') & pairwise_dist <= 10 &
+           !is.na(loc1) & !is.na(loc2) & loc1 == loc2) %>% 
+  mutate(f38 = loc1 == 'F38' | loc2 == 'F38') %>% 
+  group_by(f38) %>% 
+  summarize(count = n()) %>% 
+  ungroup() %>% 
+  mutate(tot = sum(count),
+         pct = paste0(round(count/tot*100), '%')) 
+```
+
+```{r}
+f3d <- mn_snv_dat_orig %>% 
+  filter(ST %in% c('ST171') & pairwise_dist <= 10 &
+           !is.na(loc1) & !is.na(loc2) & loc1 != loc2) %>% 
+  mutate(datediff_bin = cut(as.numeric(datediff), breaks = c(-1, 365*1:7),
+                            labels = c('0-1 year', paste0(1:6, '-', 2:7, ' years'))),
+         under_thresh = factor(under_thresh, 
+                               levels = rev(unique(levels(under_thresh)))),
+         loc1 = ifelse(loc1 %in% c('F38', 'F55', 'F34', 'F46'), loc1, 'Other'),
+         loc2 = ifelse(loc2 %in% c('F38', 'F55', 'F34', 'F46'), loc2, 'Other')
+         ) %>% 
+  rowwise() %>% 
+  mutate(loc1_new = paste(sort(c(loc1, loc2)))[1],
+         loc2_new = paste(sort(c(loc1, loc2)))[2]) %>% 
+  ungroup() %>%
+  group_by(loc1_new, loc2_new) %>% 
+  summarize(count = n()) %>% 
+  ungroup() %>% 
+  mutate(tot = sum(count),
+         pct = paste0(round(count/tot*100), '%')) %>% 
+  ggplot(aes(x = loc1_new, y = loc2_new, fill = count, label = pct)) + 
+  geom_tile() +
+  geom_text(col = 'white') +
+  labs(x = 'Location of isolate 1', y = 'Location of isolate 2', 
+       fill = 'Number of pairs\nwithin 10 SNVs')
+```
 
 ```{r}
 g_mn <- mn_trans_net_sub %>% 
@@ -1183,33 +1020,91 @@ stre <- strength(g_mn)
 betw <- betweenness(g_mn)
 clos <- closeness(g_mn, mode = 'all')
 
-facil_w_ind <- which(names(V(g_mn)) == 'F38')
+facil_w_ind <- which(names(V(g_mn)) == 'F38') # F55
 
-fs13 <- bind_cols(inds=names(deg), 'Degree'=deg, 'Strength'=stre, 'Betweenness'=betw, 'Closeness'=clos) %>% 
+f3e <- bind_cols(inds=names(deg), 'Degree'=deg, 'Strength'=stre, 'Betweenness'=betw, 'Closeness'=clos) %>% 
   pivot_longer(cols = -inds) %>% 
+  filter(name == 'Degree') %>% 
   ggplot(aes(x = value)) + geom_histogram(bins = 70) +
   geom_point(data = data.frame(
     value=c(deg[facil_w_ind], stre[facil_w_ind], betw[facil_w_ind],clos[facil_w_ind]),
-    name=c('Degree','Strength','Betweenness','Closeness')),
+    name=c('Degree','Strength','Betweenness','Closeness')) %>% 
+      filter(name == 'Degree'),
     aes(x = value, y = 0), col = 'red', shape = 18, size = 3) +
   ggrepel::geom_text_repel(data = data.frame(
     value=c(deg[facil_w_ind], stre[facil_w_ind], betw[facil_w_ind],clos[facil_w_ind]), 
-    name=c('Degree','Strength','Betweenness','Closeness')), 
-    aes(label = 'W', y = 0), col = 'red', size = 3) +
-  labs(x = 'Centrality metric', y = 'Number of facilities') +
-  facet_wrap(~name, scales = 'free') +
+    name=c('Degree','Strength','Betweenness','Closeness')) %>% 
+      filter(name == 'Degree'), 
+    aes(label = 'F38', y = 0), col = 'red', size = 3) +
+  labs(x = 'Degree centrality', y = 'Number of facilities') +
+  # facet_wrap(~name, scales = 'free') +
   theme(plot.margin = margin(0,0.5,0,0, "cm"))
-
-ggsave(plot = fs13, filename = 'figures/FigS13.png', width = 5, height = 3.5)
-
-fs13
 ```
 
+```{r}
+mn_pt_trans_all <- get_patient_flow(mn_trans_net_sub,
+                                    unique(facil_st_orig$Facility_ID)[unique(facil_st_orig$Facility_ID) %in% 
+                                                        c(mn_trans_net_sub$source_facil,
+                                                          mn_trans_net_sub$dest_facil)]) %>% 
+  filter(!duplicated(.))
+```
+
+```{r}
+f3f <- mn_pt_trans_all %>% 
+  mutate(of_interest = loc1 == 'F38' & loc2 %in% c('F55', 'F46', 'F34') |
+           loc2 == 'F38' & loc1 %in% c('F55', 'F46', 'F34')) %>% 
+  ggplot(aes(x = sum_transfers)) +
+  geom_histogram(bins = 100) +
+  geom_point(data = mn_pt_trans_all %>% 
+               filter(loc1 == 'F38' & loc2 %in% c('F55', 'F46', 'F34') |
+                        loc2 == 'F38' & loc1 %in% c('F55', 'F46', 'F34')) %>% 
+               mutate(loc = ifelse(loc1 == 'F38', paste0('F38-', loc2), 
+                                   paste0('F38-', loc1))),
+             aes(y = 0), col = 'red') +
+  geom_label_repel(data = mn_pt_trans_all %>% 
+               filter(loc1 == 'F38' & loc2 %in% c('F55', 'F46', 'F34') |
+                        loc2 == 'F38' & loc1 %in% c('F55', 'F46', 'F34')) %>% 
+               mutate(loc = ifelse(loc1 == 'F38', paste0('F38-', loc2), 
+                                   paste0('F38-', loc1))),
+             aes(y = 0, label = loc), col = 'red', 
+             box.padding = 0.5, max.overlaps = Inf) +
+  labs(y = 'Number of facilities', x = 'Number of patient transfers between F38 and another facility')
+  
+```
+
+```{r, fig.width=15, fig.height=7}
+f3 <- plot_grid(f3a + theme(legend.position = 'left'), 
+          f3b + theme(legend.position = 'none'), 
+          f3c + theme(legend.position = 'none',
+                      axis.text.x = element_text(size = 5)), 
+          f3d + facet_grid(''~.) + theme(legend.position = 'left'),
+          f3e, 
+          f3f, 
+          labels = 'AUTO', rel_widths = c(1, 0.8, 1))
+
+ggsave(plot = f3, filename = 'figures/Fig3.png', width = 15, height = 7)
+f3
+```
+
+
+```{r}
+mn_pt_trans_all %>%
+  mutate(n_transfers_f12 = ifelse(is.na(n_transfers_f12), 0, n_transfers_f12),
+         n_transfers_f21 = ifelse(is.na(n_transfers_f21), 0, n_transfers_f21),
+         sum_transfers = n_transfers_f12 + n_transfers_f21) %>% 
+  arrange(sum_transfers) %>% 
+  mutate(rank = row_number(), 
+         tot = nrow(.),
+         percentile = rank/tot) %>% 
+  filter(loc1 == 'F38' & loc2 %in% c('F55', 'F46', 'F34') |
+           loc2 == 'F38' & loc1 %in% c('F55', 'F46', 'F34')) %>% 
+  select(loc1, loc2, rank, tot, percentile)
+```
 
 
 ## TN facility cluster (Figure 4)
 
-```{r}
+```{r, results='hide'}
 prior_hosps_tn_counts <- prior_hosps_tn %>% 
   select(Sample_ID, Fac_ID) %>% 
   unique() %>% 
@@ -1237,10 +1132,10 @@ tn_hm <- prior_hosps_tn_counts %>%
 tn_facil_hm <- prior_hosps_tn_counts %>% 
   mutate(Facility = factor(Facility, levels = rev(tn_hm$tree_col$labels[tn_hm$tree_col$order]) %>% gsub('TDH.', 'TDH-', .) %>% gsub('LONG.', 'LONG-', .) %>% gsub('VA.', 'VA-', .) %>% gsub('\\.', ' ', .)),
          ST = factor(ST, levels = tn_hm$tree_row$labels),
-         ST = gsub('E. hormaechei', '*E. hormaechei*', ST),
-         ST = gsub('K. pneumoniae', '*K. pneumoniae*', ST), 
-         ST = factor(ST, levels = rev(c('*K. pneumoniae* ST258', '*E. hormaechei* ST171', 'Other', '*E. hormaechei* ST114', '*K. pneumoniae* ST307'))),
-
+         ST = gsub('E. hormaechei', 'KPC-Eh', ST),
+         ST = gsub('K. pneumoniae', 'KPC-Kp', ST),
+         ST = factor(ST, levels = rev(c('KPC-Kp ST258', 'KPC-Eh ST171', 'Other', 'KPC-Eh ST114', 'KPC-Kp ST307'))),
+) %>% 
   ggplot(aes(x = Facility, y = ST, fill = count)) +
   geom_tile() +
   geom_rect(aes(xmin = 0+0.5, xmax = 7+0.5, ymin = 0+0.5, ymax = 3+0.5), fill = NA, col = 'black', size = 1, linetype = 'dotted') +
@@ -1248,8 +1143,6 @@ tn_facil_hm <- prior_hosps_tn_counts %>%
   theme_classic() +
   theme(axis.text.x = element_blank(), axis.text.y = element_markdown()) +
   labs(fill = 'Count')
-
-tn_facil_hm
 ```
 
 ```{r}
@@ -1276,20 +1169,28 @@ tn_facils_st <- facil_st %>% filter(State == 'TN') %>%
 ```
 
 ```{r}
-graph_tn <- tbl_graph(nodes = tn_facils_st, edges = tn_trans_net_sub %>% filter(!grepl('I', source_facil) & !grepl('I', dest_facil) & n_transfers > 1), directed = TRUE) %>%
+graph_tn <- tbl_graph(nodes = tn_facils_st %>% 
+                        mutate(facil_st_type = gsub('K. pneumoniae', 'KPC-Kp', facil_st_type),
+                               facil_st_type = gsub('E. hormaechei', 'KPC-Eh', facil_st_type),
+                               facil_st_type = gsub(' facility cluster', 
+                                                    '\nfacility cluster', facil_st_type)
+                               ), 
+                      edges = tn_trans_net_sub %>% 
+                        filter(!grepl('I', source_facil) & !grepl('I', dest_facil) & n_transfers > 1),
+                      directed = TRUE) %>%
   induced.subgraph(igraph::degree(.) > 0)
 
-tn_network <- graph_tn %>% ggraph(layout = 'kk') + 
+tn_network <- graph_tn %>% 
+  ggraph(layout = 'kk') + 
   geom_edge_link(aes(color = n_transfers, alpha = n_transfers), arrow = arrow(length = unit(3, 'mm'))) + 
   geom_node_point(aes(color = facil_st_type, size = n_isolates)) + 
-  scale_edge_color_viridis(direction = -1, option = 'E') +
+  # scale_edge_color_viridis(direction = -1, option = 'E') +
+  scale_edge_color_continuous(high = '#00204c', low = '#ffe945') +
   scale_color_manual(values = c(unname(st_cols[1]), 'coral3', 'lightsalmon', 'grey')) +
   guides(edge_alpha = 'none') +
   theme_graph() +
   labs(color = 'Most common ST', shape = '', size = 'Number of isolates',
-       edge_color = 'Number of transfers (in thousands)')  #+
-  # theme(legend.text = element_markdown())
-tn_network
+       edge_color = 'Number of transfers\n(in thousands)')
 ```
 
 ```{r}
@@ -1307,15 +1208,31 @@ tn_facil_transfers <- tn_trans_net_sub %>%
   geom_density() +
   labs(x = 'Number of patient transfers', y = 'Density', linetype = 'Number of isolates\nof pair in facility\ncluster') +
   theme(legend.position = 'left')
-
-tn_facil_transfers
 ```
 
 ```{r}
-plot_grid(plot_grid(tn_facil_hm + theme(legend.position = 'left'), tn_facil_transfers, nrow = 2, align = 'hv', labels = c('A', 'C')), tn_network, nrow = 1, rel_widths = c(0.8, 1), labels = c('', 'B')) %>% 
-  ggsave(filename = 'figures/Fig4.png', width = 12, height = 5)
+tn_trans_net_sub %>% 
+  left_join(tn_facils_st %>% rename(source_of_interest = of_interest) %>% 
+              select(Facility_ID, source_of_interest), 
+            by = c(source_facil = 'Facility_ID')) %>% 
+  left_join(tn_facils_st %>% rename(dest_of_interest = of_interest) %>% 
+              select(Facility_ID, dest_of_interest), 
+            by = c(dest_facil = 'Facility_ID')) %>% 
+  replace(is.na(.), 0) %>% 
+  mutate(of_interest = source_of_interest + dest_of_interest) %>% 
+  filter(!grepl('I', source_facil) & !grepl('I', dest_facil) & n_transfers > 1) %>% 
+  filter(source_of_interest | dest_of_interest) %>% 
+  ungroup() %>% 
+  summarize(wilcox_p = wilcox.test(n_transfers[of_interest == 1], n_transfers[of_interest == 2])$p.value)
 ```
 
+
+```{r, fig.width=12, fig.height=5}
+f4 <- plot_grid(plot_grid(tn_facil_hm + theme(legend.position = 'left'), tn_facil_transfers, nrow = 2, align = 'hv', labels = c('A', 'C')), tn_network, nrow = 1, rel_widths = c(0.8, 1), labels = c('', 'B')) 
+
+ggsave(filename = 'figures/Fig4.png', plot = f4, width = 12, height = 5)
+f4
+```
 
 ## Supplemental file with isolate IDs and information
 
@@ -1327,7 +1244,7 @@ sample_metadat <- read_csv('data/eip-metadat-short.csv') %>%
   left_join(facil_st) %>% 
   select(-c(latitude, longitude))
 
-all_sample_info_not_tn <- sample_metadat %>% 
+all_sample_info <- sample_metadat %>% 
   select(Fac_ID, Facility_ID) %>% 
   filter(!is.na(Facility_ID)) %>% 
   unique() %>% 
@@ -1337,7 +1254,9 @@ all_sample_info_not_tn <- sample_metadat %>%
               select(Pat_ID, Patient_ID) %>% 
               filter(!is.na(Patient_ID)) %>% 
               unique()) %>% 
-  mutate(Cult_Year = gsub('-.*', '', Cult_Date)) %>% 
+  mutate(Cult_Year = gsub('-.*', '', Cult_Date)) 
+
+all_sample_info_not_tn <- all_sample_info %>% 
   filter(State != 'TN') %>% 
   arrange(Patient_ID) %>% 
   mutate(Pat_ID = factor(Pat_ID, levels = unique(Pat_ID)),
@@ -1348,4 +1267,38 @@ all_sample_info_not_tn <- sample_metadat %>%
 
 all_sample_info_not_tn %>% 
   write_csv('data/supp_file_1.csv')
+
+# to not submit to ncbi (because previously submitted)
+dont_submit <- all_sample_info_not_tn %>% 
+  filter(State == 'MN' & Species == 'E. hormaechei' & Cult_Year < 2013) %>% 
+  pull(Sample_ID) 
+
+dont_submit %>% 
+  cat(sep = ',')
 ```
+
+```{r}
+all_sample_info %>% 
+  select(Sample_ID, State, Species, ST) %>% 
+  left_join(all_sample_info_not_tn) %>% 
+  filter(!Sample_ID %in% dont_submit) %>% 
+  rename(sample_name = Sample_ID,
+         organism = Species,
+         collection_date = Cult_Year) %>% 
+  mutate(bioproject_accession = 'PRJNA873034',
+         isolate = paste0(sample_name, '_', Patient_ID, '_', Facility_ID),
+         strain = ifelse(grepl('ST', ST), gsub('.*ST', 'ST', ST), NA),
+         collected_by = case_when(State == 'MN' ~ 'Minnesota Department of Health',
+                                  State == 'TN' ~ 'Tennessee Department of Health',
+                                  State == 'CT' ~ 'Connecticut Department of Public Health'),
+         geo_loc_name = paste0('USA: ', State),
+         host = 'Homo sapiens',
+         host_disease = 'not applicable', 
+         isolation_source = 'not collected',
+         lat_lon = 'not collected') %>% 
+  select(sample_name,	bioproject_accession,	organism,	strain,	isolate,	collected_by,	collection_date,
+         geo_loc_name,	host,	host_disease,	isolation_source,	lat_lon) %>% 
+  write_csv('data/sra_submission_info.csv')
+```
+
+
