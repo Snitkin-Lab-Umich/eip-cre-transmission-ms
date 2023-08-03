@@ -2,4 +2,4 @@
 
 Code and data related to EIP CRE transmission project.
 
-Preprint: https://www.medrxiv.org/content/10.1101/2022.09.15.22279972v1
+Manuscript: https://journals.asm.org/doi/10.1128/jcm.00259-23
